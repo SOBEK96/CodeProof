@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "CodeProof Grant HUD - autonomous grant escrow on GenLayer Studio Next",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SOBEK96/CodeProof.git",
+    "directory": "frontend"
+  },
+  "homepage": "https://github.com/SOBEK96/CodeProof#readme",
+  "bugs": {
+    "url": "https://github.com/SOBEK96/CodeProof/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

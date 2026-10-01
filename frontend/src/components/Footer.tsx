@@ -21,7 +21,7 @@ export default function Footer() {
         <div className="space-y-2 text-sm">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Project</div>
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-300 hover:text-white"><Github className="h-4 w-4" /> GitHub repository</a>
-          <a href={`${REPO_URL}/blob/main/tests/test_evaluate.py`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-300 hover:text-white"><BookOpenCheck className="h-4 w-4" /> Test suite (pytest, 75+ cases)</a>
+          <a href={`${REPO_URL}/tree/main/tests`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-300 hover:text-white"><BookOpenCheck className="h-4 w-4" /> Test suite (pytest, 75+ cases)</a>
           <a href={`${REPO_URL}#steward-test-guide`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-300 hover:text-white"><ScrollText className="h-4 w-4" /> Steward test guide</a>
         </div>
       </div>

@@ -179,6 +179,12 @@ frontend/                    Vite + React + Tailwind Grant HUD
 
 ## Running it
 
+Repository: <https://github.com/SOBEK96/CodeProof>
+
+```bash
+git clone https://github.com/SOBEK96/CodeProof.git && cd CodeProof
+```
+
 Python side (needs `genlayer-py`, `python-dotenv`, and for tests `genlayer-test`):
 
 ```bash

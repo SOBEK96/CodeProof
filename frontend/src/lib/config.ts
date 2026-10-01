@@ -2,7 +2,7 @@ export const CHAIN_ID = 61997;
 export const CHAIN_HEX = "0xF22D";
 export const RPC_URL = "https://studio-next.genlayer.com/api";
 export const EXPLORER = "https://explorer-studio-next.genlayer.com";
-export const REPO_URL = "https://github.com/Handik4/CodeProof";
+export const REPO_URL = "https://github.com/SOBEK96/CodeProof";
 export const GEN = 10n ** 18n;
 export const BOND_ATTO = GEN / 20n;
 
