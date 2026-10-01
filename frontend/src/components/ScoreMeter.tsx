@@ -5,24 +5,29 @@ interface Props {
   size?: "sm" | "lg";
 }
 
-// A score bar with the approval threshold drawn as a tick, so "94 vs 85" reads at a glance.
+// Gradient gauge with the approval threshold drawn as a labelled tick.
 export default function ScoreMeter({ score, threshold, evaluated, size = "sm" }: Props) {
   const pass = evaluated && score >= threshold;
-  const tone = !evaluated ? "bg-slate-600" : pass ? "bg-emerald-400" : score >= 40 ? "bg-amber-400" : "bg-rose-500";
-  const h = size === "lg" ? "h-3" : "h-1.5";
+  const fill = !evaluated
+    ? "bg-zinc-700"
+    : pass
+      ? "bg-gradient-to-r from-emerald-500 to-cyan-400 shadow-[0_0_14px_rgba(52,211,153,.55)]"
+      : score >= 40
+        ? "bg-gradient-to-r from-amber-500 to-amber-300"
+        : "bg-gradient-to-r from-rose-600 to-rose-400 shadow-[0_0_14px_rgba(251,113,133,.4)]";
+  const h = size === "lg" ? "h-3" : "h-2";
   return (
-    <div className="w-full min-w-[96px]" aria-label={evaluated ? `Score ${score} of 100, threshold ${threshold}` : "Not yet scored"}>
-      <div className={`relative ${h} overflow-visible rounded-full bg-slate-800`}>
-        <div className={`${h} rounded-full ${tone} transition-all`} style={{ width: `${evaluated ? score : 0}%` }} />
-        <span
-          className="absolute -top-1 bottom-[-4px] w-px bg-slate-300/70"
-          style={{ left: `${threshold}%` }}
-          title={`Approval threshold ${threshold}`}
-        />
+    <div className="w-full min-w-[110px]" role="img" aria-label={evaluated ? `Score ${score} of 100, threshold ${threshold}` : "Not yet scored"}>
+      <div className="mb-1.5 flex items-baseline justify-between font-mono">
+        <span className={`${size === "lg" ? "text-2xl" : "text-base"} font-bold ${pass ? "text-emerald-300" : evaluated ? "text-zinc-100" : "text-zinc-600"}`}>
+          {evaluated ? score : "--"}
+          <span className="text-xs font-medium text-zinc-500">/100</span>
+        </span>
+        <span className="text-[11px] text-zinc-500">threshold {threshold}</span>
       </div>
-      <div className="mt-1 flex justify-between font-mono text-[11px] text-slate-400">
-        <span className={pass ? "text-emerald-300" : ""}>{evaluated ? `${score}/100` : "--/100"}</span>
-        <span>min {threshold}</span>
+      <div className={`relative ${h} rounded-full bg-zinc-800/90`}>
+        <div className={`${h} rounded-full transition-all duration-700 ${fill}`} style={{ width: `${evaluated ? Math.max(score, 2) : 0}%` }} />
+        <span className="absolute -bottom-1 -top-1 w-0.5 rounded bg-zinc-200/80" style={{ left: `calc(${threshold}% - 1px)` }} title={`Approval threshold ${threshold}`} />
       </div>
     </div>
   );

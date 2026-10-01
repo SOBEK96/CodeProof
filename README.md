@@ -206,7 +206,7 @@ npm run dev              # http://localhost:5173
 npm run console-check    # headless Chrome: zero console errors on live contract load
 ```
 
-The HUD reads the contract address from `deployments/studio-next.json` (or `VITE_CONTRACT_ADDRESS`).
+The HUD reads the contract address from `deployments/studio-next.json` (or `VITE_CONTRACT_ADDRESS`). Everything on the cards comes from the contract: CI, method, file and authorship badges are parsed from each grant's stored audit report, and a grant that has not been evaluated shows them as *unverified* instead of guessing. The evaluation modal's log is tagged by source: `[preview]` checks recomputed client-side from public GitHub data (an approximation; the validators re-fetch everything), `[chain]` events from your live transaction, and `[on-chain]` lines from the stored audit report. For UI work without sending a transaction, `npm run dev` accepts `?fixture=pending`, which shows the latest grant as awaiting evaluation; that code is compiled out of production builds.
 
 ## Steward test guide
 

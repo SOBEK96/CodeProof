@@ -57,9 +57,9 @@ try {
   await page.goto(URL_TO_CHECK, { waitUntil: "networkidle2", timeout: 60000 });
   await page.waitForSelector('[data-testid="grants-loaded"]', { timeout: 90000 });
 
-  const banner = await page.evaluate(() => document.querySelector("#milestones .border-rose-500\\/30")?.textContent ?? null);
+  const banner = await page.evaluate(() => document.querySelector('[data-testid="load-error"]')?.textContent ?? null);
   if (banner) problems.push(`contract load error banner: ${banner}`);
-  const rows = await page.evaluate(() => document.querySelectorAll("#milestones tbody tr").length);
+  const rows = await page.evaluate(() => document.querySelectorAll("#milestones article").length);
   if (rows === 0 && !banner) problems.push("live contract loaded but returned zero grants");
   const navH = await page.evaluate(() => Math.round(document.querySelector("header nav").getBoundingClientRect().height));
   if (navH !== 64) problems.push(`navbar height is ${navH}px, expected 64px`);

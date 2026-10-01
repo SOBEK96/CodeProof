@@ -13,25 +13,25 @@ const ROWS: [string, string, string][] = [
 export default function ComparisonCard() {
   return (
     <section aria-label="Autonomous arbitration versus manual review" className="card overflow-hidden">
-      <div className="border-b border-slate-800 p-5">
+      <div className="border-b border-zinc-800 p-5">
         <h2 className="text-xl font-bold text-white">Autonomous Grant Arbitration vs Manual Reviews</h2>
-        <p className="mt-1 text-sm text-slate-400">What changes when the milestone verdict is a consensus result instead of a meeting.</p>
+        <p className="mt-1 text-sm text-zinc-400">What changes when the milestone verdict is a consensus result instead of a meeting.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-xs uppercase tracking-wider">
-            <tr className="border-b border-slate-800">
-              <th className="px-5 py-3 text-slate-500" />
+            <tr className="border-b border-zinc-800">
+              <th className="px-5 py-3 text-zinc-500" />
               <th className="px-5 py-3 text-emerald-300"><span className="inline-flex items-center gap-1.5"><Bot className="h-4 w-4" /> CodeProof (GenVM consensus)</span></th>
-              <th className="px-5 py-3 text-slate-400"><span className="inline-flex items-center gap-1.5"><UserRound className="h-4 w-4" /> Manual review</span></th>
+              <th className="px-5 py-3 text-zinc-400"><span className="inline-flex items-center gap-1.5"><UserRound className="h-4 w-4" /> Manual review</span></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/70">
+          <tbody className="divide-y divide-zinc-800/70">
             {ROWS.map(([k, a, b]) => (
               <tr key={k}>
-                <th scope="row" className="px-5 py-3 align-top font-medium text-slate-300">{k}</th>
-                <td className="px-5 py-3 align-top text-slate-200"><Check className="mr-1.5 inline h-3.5 w-3.5 text-emerald-400" />{a}</td>
-                <td className="px-5 py-3 align-top text-slate-400"><Minus className="mr-1.5 inline h-3.5 w-3.5 text-slate-600" />{b}</td>
+                <th scope="row" className="px-5 py-3 align-top font-medium text-zinc-300">{k}</th>
+                <td className="px-5 py-3 align-top text-zinc-200"><Check className="mr-1.5 inline h-3.5 w-3.5 text-emerald-400" />{a}</td>
+                <td className="px-5 py-3 align-top text-zinc-400"><Minus className="mr-1.5 inline h-3.5 w-3.5 text-zinc-600" />{b}</td>
               </tr>
             ))}
           </tbody>

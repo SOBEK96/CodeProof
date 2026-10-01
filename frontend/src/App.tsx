@@ -17,6 +17,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!CONTRACT_ADDRESS) {
@@ -26,6 +27,12 @@ export default function App() {
     }
     try {
       const data = await loadAll();
+      // Dev-only (removed from production builds): `?fixture=pending` shows the most recent
+      // grant as awaiting evaluation, to exercise the pending-state UI without a transaction.
+      if (import.meta.env.DEV && new URLSearchParams(location.search).get("fixture") === "pending" && data.grants.length) {
+        const last = data.grants[data.grants.length - 1];
+        data.grants[data.grants.length - 1] = { ...last, status: "DELIVERED", evaluated: false, quality_score: 0, audit_report: "" };
+      }
       setGrants(data.grants);
       setMetrics(data.metrics);
       setError(null);
@@ -40,10 +47,11 @@ export default function App() {
 
   const connect = async () => {
     setConnecting(true);
+    setWalletError(null);
     try {
       setAccount(await connectWallet());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setWalletError(e instanceof Error ? e.message : String(e));
     } finally {
       setConnecting(false);
     }
@@ -54,13 +62,19 @@ export default function App() {
   return (
     <div id="top" className="min-h-screen">
       <Navbar account={account} connecting={connecting} onConnect={connect} />
+      {walletError && (
+        <div role="alert" data-testid="wallet-error" className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-sm text-amber-200">
+          {walletError}{" "}
+          <button type="button" className="ml-2 underline underline-offset-2 hover:text-white" onClick={() => setWalletError(null)}>Dismiss</button>
+        </div>
+      )}
       <main className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6">
         <div>
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-emerald-300">Autonomous grant escrow</p>
-          <h1 className="mt-2 max-w-3xl text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+          <p className="eyebrow !text-emerald-300">Autonomous grant escrow · GenLayer Studio Next</p>
+          <h1 className="mt-3 max-w-3xl text-3xl font-bold leading-[1.1] tracking-tight text-white sm:text-5xl">
             Ship the commit. <span className="bg-gradient-to-r from-emerald-300 to-cyan-300 bg-clip-text text-transparent">Validators release the funds.</span>
           </h1>
-          <p className="mt-3 max-w-2xl text-slate-400">
+          <p className="mt-4 max-w-2xl text-zinc-400">
             Funders escrow GEN against machine-readable acceptance criteria. A committee of GenVM validators reads the GitHub evidence, grades the milestone under the Equivalence Principle, and settles the escrow at a score of 85 or more.
           </p>
         </div>
@@ -78,7 +92,7 @@ export default function App() {
       <Footer />
       {selected && (
         <EvaluationModal
-          key={selected.grant_id + selected.status}
+          key={selected.grant_id}
           grant={selected}
           account={account}
           onConnect={connect}
