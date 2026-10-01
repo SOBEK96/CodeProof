@@ -79,7 +79,6 @@ Known limits: a workflow that runs `echo ok` is still a green check-run, so CI i
 
 Interface changes in v4: the telemetry object (and `compute_bounds`) gains `workflow_tampered`; `ERR_PROVENANCE_MISMATCH` is now `ERR_UNAUTHORIZED_AUTHOR`.
 
-Documented limits: the workflow check looks at the commit's own diff, so a workflow edited in an *earlier* commit is not detected; a workflow that runs `echo ok` is still a green check-run. CI is evidence that a run happened, not that the tests are good.
 
 ## Trust model & game theory
 
@@ -88,6 +87,17 @@ Documented limits: the workflow check looks at the commit's own diff, so a workf
 - **Who can lose money.** A developer risks the 0.05 GEN bond only on an empty commit or a deliverable the model independently scores under 40, and the acceptance spec is public and immutable before they stake. Funders cannot slash through spec: forbidden patterns, impossible required methods and signature false-positives lower a score but never forfeit a bond.
 - **What the oracle trusts.** GitHub's API for commit metadata and Actions check-runs, and the validator committee for grading. It does not trust anything the developer commits as evidence (no report files, no edited workflows) or anything in documentation files.
 - **What it cannot prove.** That tests are meaningful, that the code is original, or that the GitHub identity is a human. Those are what the model's grade, the public spec and the funder's judgement of the result are for.
+
+## Limitations & Trust Model
+
+CodeProof narrows what a dishonest party can get away with; it does not remove judgement. These are the boundaries as they stand in the deployed contract.
+
+1. **Untrusted workflows in separate commits.** The oracle ignores check-runs for a commit that edits `.github/workflows/`, but it only inspects that commit's own diff. A developer who rewrites CI in an *earlier* commit can arrange for a later commit to show passing check-runs, and a workflow that merely runs `echo ok` is still green. CI is evidence that a run happened, not that the tests are meaningful. The current contract counts any successful GitHub Actions run; it does **not** yet require a named check. A production deployment should bind each grant to an explicit required check-run name (for example `ci / tests`) in the grant criteria, ideally one defined by a workflow the funder controls. That hardening is not implemented here.
+2. **Syntactic method declarations.** Required methods are matched structurally (`def foo(`, `function foo(`, `name = (...)`, `modifier foo`, `fn foo`, `func foo`), so a mention, a variable, a comment or a docs file cannot satisfy them. A declaration says nothing about the body: an empty stub like `def foo(): pass` passes this check. Catching stubs is left to the LLM committee, whose score must agree across validators under the Equivalence Principle. It is a judgement, not a deterministic rule, and it can be wrong in both directions.
+3. **Code authorship vs plagiarism.** The deterministic checks bind a commit to the registered GitHub handle (author is the developer, committer is the developer or `web-flow`) and require that it post-dates the grant. They cannot tell whether freshly authored code was copied from elsewhere, or written by someone else and committed under the developer's name by a compromised account. Spotting copied or derivative logic relies on the model's qualitative review and on the funder reading the result.
+4. **Evaluation liveness and the funder timeout.** `evaluate_milestone_consensus` is permissionless: anyone, including the developer, can call it on a `DELIVERED` grant. A grant left `DELIVERED` can be unwound by the funder (or the developer) with `cancel_stuck_delivery` after 7 days, refunding escrow and bond. **Developers should trigger evaluation immediately after `submit_deliverable`.** Once it settles, the grant can no longer be cancelled as stuck. The timeout is also the exit when evaluation genuinely cannot complete (rate limits, a model that never agrees).
+
+Also worth knowing: GitHub's API and the validators' model are trusted inputs, and the oracle never trusts anything a developer commits as evidence (report files, edited workflows) or anything in documentation files.
 
 ## Protocol theory
 
