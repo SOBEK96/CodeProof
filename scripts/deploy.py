@@ -53,6 +53,13 @@ def main() -> int:
     print(f"deployed  {address}")
 
     dep = load_deployment()
+    if dep.get("contract_address"):
+        old = {k: dep[k] for k in ("contract_address", "explorer_url", "deploy_tx", "deploy_tx_url",
+                                   "source_sha256", "bytecode_sha256", "deployed_at", "grants",
+                                   "metrics") if k in dep}
+        dep.setdefault("superseded_deployments", []).append(old)
+        for k in ("grants", "metrics"):
+            dep.pop(k, None)
     dep.update({
         "network": "studio-next",
         "chain_id": CHAIN_ID,
@@ -68,7 +75,6 @@ def main() -> int:
         "deployer": acct.address,
         "deployed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
     })
-    dep.pop("grants", None)  # a fresh deployment invalidates earlier seeds
     save_deployment(dep)
     print("recorded  deployments/studio-next.json")
     print(f"explorer  {EXPLORER}/address/{address}")

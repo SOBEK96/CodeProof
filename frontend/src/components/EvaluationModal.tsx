@@ -182,9 +182,9 @@ export default function EvaluationModal({ grant: g, account, onConnect, onClose,
               </h4>
               <pre className="rounded-lg border border-slate-800 bg-ink-950 p-3 font-mono text-[11.5px] leading-relaxed text-slate-300">
                 {evidence?.checks
-                  ? `CI check-runs: ${evidence.checks.passed} passed, ${evidence.checks.failed} failed (${evidence.checks.total} total)`
+                  ? `GitHub Actions check-runs: ${evidence.checks.passed} passed, ${evidence.checks.failed} failed (${evidence.checks.total} total). Only these count on-chain.`
                   : evidence
-                    ? "No CI telemetry reachable for this commit."
+                    ? "No authentic CI telemetry for this commit: the oracle caps the score at 10."
                     : "Waiting for telemetry…"}
                 {g.audit_report ? `\n\non-chain audit report:\n${g.audit_report}` : ""}
               </pre>
@@ -196,8 +196,9 @@ export default function EvaluationModal({ grant: g, account, onConnect, onClose,
                 <dl className="grid gap-2 rounded-lg border border-slate-800 bg-ink-950 p-3 text-xs sm:grid-cols-2">
                   <div><dt className="text-slate-500">Required files</dt><dd className="font-mono text-slate-300">{spec.required_files.join(", ") || "-"}</dd></div>
                   <div><dt className="text-slate-500">Required methods</dt><dd className="font-mono text-slate-300">{spec.required_methods.join(", ") || "-"}</dd></div>
-                  <div><dt className="text-slate-500">Min coverage</dt><dd className="font-mono text-slate-300">{spec.min_coverage}%</dd></div>
+                  <div><dt className="text-slate-500">Coverage target (informational)</dt><dd className="font-mono text-slate-300">{spec.min_coverage}%</dd></div>
                   <div><dt className="text-slate-500">Forbidden patterns</dt><dd className="font-mono text-slate-300">{spec.forbidden_patterns.join(", ") || "-"}</dd></div>
+                  <div><dt className="text-slate-500">Developer handle (provenance)</dt><dd className="font-mono text-slate-300">@{g.developer_handle}</dd></div>
                   <div className="sm:col-span-2"><dt className="text-slate-500">Security invariants</dt><dd className="text-slate-300">{spec.security_invariants.join(" · ") || "-"}</dd></div>
                 </dl>
               </div>
@@ -226,6 +227,11 @@ export default function EvaluationModal({ grant: g, account, onConnect, onClose,
             )}
             {g.status === "APPROVED" && (
               <button type="button" className="btn-ghost w-full" onClick={claim}>Claim payout (developer)</button>
+            )}
+            {g.status === "DELIVERED" && g.delivered_at > 0 && Date.now() / 1000 > g.delivered_at + 7 * 86400 && (
+              <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+                Delivered over 7 days ago without a verdict: the funder or developer may call cancel_stuck_delivery to refund escrow and bond.
+              </p>
             )}
             {!canEvaluate && !settled && <p className="text-xs text-slate-500">This grant is {g.status.toLowerCase()}; evaluation opens once the developer submits a deliverable.</p>}
             {error && <p className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300">{error}</p>}

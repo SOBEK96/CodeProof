@@ -43,14 +43,14 @@ def test_create_grant_default_threshold_is_85(env):
     assert c.get_grant(gid)["threshold_score"] == 85
 
 
-@pytest.mark.parametrize("thr", [1, 49, 101, 1000])
+@pytest.mark.parametrize("thr", [1, 49, 50, 69, 101, 1000])
 def test_create_grant_rejects_bad_threshold(env, thr):
     c, vm, a, b, s = env
     with vm.expect_revert("ERR_INVALID_PARAMS"):
         create(c, vm, a, dev_hex(env), threshold=thr)
 
 
-@pytest.mark.parametrize("thr", [50, 51, 85, 99, 100])
+@pytest.mark.parametrize("thr", [70, 71, 85, 99, 100])
 def test_create_grant_accepts_threshold_range(env, thr):
     c, vm, a, b, s = env
     gid = create(c, vm, a, dev_hex(env), threshold=thr)
@@ -116,6 +116,7 @@ def test_create_grant_spec_is_normalised(env):
     '{"required_files": [1]}', '{"required_files": [""]}',
     '{"required_methods": ["bad name!"]}', '{"required_files": ["../../etc"]}'.replace("../../etc", "a b"),
     '{"forbidden_patterns": [""]}', '{"architecture": 5}',
+    '{"forbidden_patterns": ["a", "e", "i", "o", "u"]}', '{"forbidden_patterns": ["ab"]}',
     json.dumps({"required_files": ["f%d" % i for i in range(13)]}),
     json.dumps({"required_methods": ["m%d" % i for i in range(25)]}),
 ])

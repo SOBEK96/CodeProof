@@ -65,7 +65,7 @@ def test_score_one_below_threshold_is_rejected(env):
     assert r == "REJECTED"
 
 
-@pytest.mark.parametrize("thr", [50, 70, 90, 100])
+@pytest.mark.parametrize("thr", [70, 80, 90, 100])
 def test_custom_threshold_respected(env, thr):
     gid, r = run(env, thr, threshold=thr, report=good_report())
     assert r == "APPROVED"
@@ -78,7 +78,7 @@ def test_custom_threshold_one_below_rejects(env, thr):
 
 
 def test_ci_check_runs_count_as_test_telemetry(env):
-    checks = [{"conclusion": "success"}] * 5
+    checks = [run_entry("success")] * 5
     gid, r = run(env, 92, spec=spec_json(min_coverage=0), checks=checks)
     assert r == "APPROVED"
 
@@ -107,11 +107,6 @@ def test_no_test_telemetry_caps_score(env):
     assert r == "REJECTED"
 
 
-def test_low_coverage_caps_score(env):
-    gid, r = run(env, 99, report=good_report(coverage=30))
-    assert env[0].get_grant(gid)["quality_score"] < 85
-
-
 def test_forbidden_pattern_penalises_ceiling(env):
     patch = GOOD_PATCH + "+require(tx.origin == owner);\n"
     gid, r = run(env, 99, report=good_report(), patch=patch)
@@ -137,7 +132,7 @@ def test_llm_low_score_respected_inside_corridor(env):
 
 def test_llm_score_clamped_up_to_corridor_floor(env):
     gid, r = run(env, 0, report=good_report())
-    assert env[0].get_grant(gid)["quality_score"] == 60  # lo = 0.6 * 100
+    assert env[0].get_grant(gid)["quality_score"] == 50  # lo = 0.5 * 100
 
 
 def test_rejected_refunds_escrow_to_funder(env):
@@ -173,8 +168,8 @@ def test_no_test_telemetry_corridor_is_fraud_tier(env):
     c = env[0]
     tel = json.dumps(dict(files_total=1, additions=1, deletions=0, req_files_total=0,
                           req_files_found=0, methods_total=0, methods_found=0, forbidden_hits=0,
-                          has_report=False, tests_passed=0, tests_failed=0, coverage=-1))
-    assert c.compute_bounds(tel, 0) == {"lo": 0, "hi": 10}
+                          tests_passed=0, tests_failed=0, malicious_hits=0))
+    assert c.compute_bounds(tel) == {"lo": 0, "hi": 10}
 
 
 def test_score_at_fraud_boundary_keeps_bond(env):
@@ -184,7 +179,7 @@ def test_score_at_fraud_boundary_keeps_bond(env):
     spec = spec_json(required_files=[], required_methods=["deposit", "a1", "a2", "a3", "a4"],
                      min_coverage=0)
     gid = delivered(c, vm, a, b, spec=spec)
-    mock_github(vm, report=good_report(), patch="+deposit\n+a1\n")  # 2/5 methods
+    mock_github(vm, report=good_report(), patch="+function deposit() {}\n+function a1() {}\n")  # 2/5 methods
     mock_score(vm, 40)
     evaluate(c, vm, s, gid)
     g = c.get_grant(gid)
@@ -197,7 +192,7 @@ def test_score_just_below_fraud_boundary_forfeits(env):
     spec = spec_json(required_files=[], required_methods=["deposit", "a1", "a2", "a3", "a4"],
                      min_coverage=0)
     gid = delivered(c, vm, a, b, spec=spec)
-    mock_github(vm, report=good_report(), patch="+deposit\n")  # 1/5 -> corridor [12, 30]
+    mock_github(vm, report=good_report(), patch="+function deposit() {}\n")  # 1/5 -> corridor [10, 30]
     mock_score(vm, 35)
     evaluate(c, vm, s, gid)
     assert c.get_grant(gid)["quality_score"] == 30
@@ -261,7 +256,7 @@ def test_unreachable_403_other_client_error_fails_closed_or_retries(env):
     assert evaluate(c, vm, s, gid) == "DISPUTED"
 
 
-@pytest.mark.parametrize("status", [429, 500, 502, 503, 403])
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
 def test_transient_errors_revert_and_change_nothing(env, status):
     c, vm, a, b, s = env
     gid = delivered(c, vm, a, b)
@@ -369,7 +364,7 @@ def test_malformed_llm_output_reverts_with_llm_error(env, payload):
 
 @pytest.mark.parametrize("raw,expected", [
     ({"score": "94"}, 94), ({"score": 94.4}, 94), ({"rating": 92}, 92),
-    ({"score": 250}, 100), ({"score": -5}, 60),
+    ({"score": 250}, 100), ({"score": -5}, 50),
 ])
 def test_llm_score_coercion(env, raw, expected):
     c, vm, a, b, s = env

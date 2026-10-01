@@ -59,9 +59,9 @@ def test_validator_disagrees_when_test_telemetry_differs(env):
     assert validator_sees(env[1], 94, report=good_report(passed=3, failed=3)) is False
 
 
-def test_validator_disagrees_when_coverage_differs(env):
+def test_validator_disagrees_when_ci_run_count_differs(env):
     leader_run(env, 94)
-    assert validator_sees(env[1], 94, report=good_report(coverage=95)) is False
+    assert validator_sees(env[1], 94, report=good_report(passed=41)) is False
 
 
 def test_validator_disagrees_when_files_differ(env):

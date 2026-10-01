@@ -227,31 +227,42 @@ def test_claimable_of_unknown_is_zero(env):
 import json as _json
 
 TEL = dict(files_total=2, additions=40, deletions=0, req_files_total=2, req_files_found=2,
-           methods_total=3, methods_found=3, forbidden_hits=0, has_report=True,
-           tests_passed=42, tests_failed=0, coverage=100)
+           methods_total=3, methods_found=3, forbidden_hits=0, malicious_hits=0,
+           tests_passed=42, tests_failed=0)
 
 
-def bounds(c, min_cov=90, **over):
+def bounds(c, **over):
     t = dict(TEL); t.update(over)
-    return c.compute_bounds(_json.dumps(t), min_cov)
+    return c.compute_bounds(_json.dumps(t))
 
 
 def test_bounds_weakest_criterion_governs(env):
-    # methods 1/3 -> weakest .333 -> [20, 43], however good everything else is
-    assert bounds(env[0], methods_found=1) == {"lo": 20, "hi": 43}
+    # methods 1/3 -> weakest .333 -> [16, 43], however good everything else is
+    assert bounds(env[0], methods_found=1) == {"lo": 16, "hi": 43}
 
 
 def test_bounds_perfect(env):
-    assert bounds(env[0]) == {"lo": 60, "hi": 100}
+    assert bounds(env[0]) == {"lo": 50, "hi": 100}
+
+
+def test_bounds_floor_is_below_minimum_threshold(env):
+    assert bounds(env[0])["lo"] < 70
 
 
 @pytest.mark.parametrize("over,hi_max", [
     (dict(req_files_found=0), 85), (dict(methods_found=0), 85),
-    (dict(tests_passed=0), 85), (dict(coverage=0), 85),
-    (dict(forbidden_hits=2), 80),
+    (dict(tests_passed=0), 85), (dict(forbidden_hits=2), 80),
 ])
 def test_bounds_single_failure_blocks_default_approval(env, over, hi_max):
     assert bounds(env[0], **over)["hi"] <= hi_max
+
+
+def test_bounds_no_authentic_ci_is_fail_closed(env):
+    assert bounds(env[0], tests_passed=0, tests_failed=0)["hi"] == 10
+
+
+def test_bounds_malicious_payload_zeroes_ceiling(env):
+    assert bounds(env[0], malicious_hits=1) == {"lo": 0, "hi": 0}
 
 
 def test_bounds_empty_commit_capped_at_20(env):
@@ -267,14 +278,10 @@ def test_bounds_hi_clamped_to_zero(env):
     assert bounds(env[0], forbidden_hits=50, tests_passed=0, methods_found=0)["hi"] == 0
 
 
-def test_bounds_no_coverage_requirement_ignores_coverage(env):
-    assert bounds(env[0], min_cov=0, coverage=-1, has_report=False)["hi"] == 100
-
-
 def test_bounds_failed_tests_halve_test_score(env):
     assert bounds(env[0], tests_passed=10, tests_failed=10)["hi"] < bounds(env[0])["hi"]
 
 
 def test_bounds_rejects_malformed_json(env):
     with env[1].expect_revert("ERR_INVALID_PARAMS"):
-        env[0].compute_bounds("{}", 0)
+        env[0].compute_bounds("{}")

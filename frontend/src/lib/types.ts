@@ -13,6 +13,7 @@ export interface Grant {
   grant_id: number;
   funder: string;
   developer: string;
+  developer_handle: string;
   title: string;
   escrow_amount: string;
   threshold_score: number;
@@ -24,6 +25,7 @@ export interface Grant {
   status: Status;
   developer_bond: string;
   created_at: number;
+  delivered_at: number;
   attempts: number;
   evaluated: boolean;
 }

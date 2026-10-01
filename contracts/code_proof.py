@@ -4,28 +4,36 @@
 # CodeProof - autonomous software-engineering grant escrow & milestone oracle.
 #
 # Funders lock a grant in native GEN together with machine-readable acceptance
-# criteria. A developer stakes a small anti-spam bond and submits a GitHub
-# commit. Any steward may then trigger evaluation: every validator
-#   1. ingests the commit metadata and CI / test telemetry straight from the
-#      GitHub API (deterministic evidence, re-fetched independently),
-#   2. derives a mathematical score corridor [lo, hi] from that evidence
-#      (`_bounds`) -- missing files, missing methods, red tests, forbidden
-#      patterns and empty commits make a high score arithmetically impossible,
-#   3. lets an LLM grade readability / architecture / edge cases / CVE-free
-#      design, clamped INTO the corridor,
+# criteria and the GitHub handle of the developer. A developer stakes a small
+# anti-spam bond and submits a GitHub commit. Any steward may then trigger
+# evaluation: every validator
+#   1. ingests the commit from the GitHub API and PROVES PROVENANCE: the commit
+#      must live in the developer's own repository (or be authored AND committed
+#      by the developer's account) and must post-date the grant,
+#   2. reads test telemetry ONLY from authentic GitHub Actions check-runs (the
+#      repository's own `.codeproof/report.json` is never trusted),
+#   3. strips comments, docstrings and string literals before looking for
+#      required methods or forbidden patterns, so only executable declarations
+#      count,
+#   4. derives a mathematical score corridor [lo, hi] from that evidence
+#      (`_bounds`) and lets an LLM grade quality inside it,
 # and the committee agrees under the Equivalence Principle through a custom
-# validator (`_agree`): identical deterministic evidence, leader score inside
-# the validator's own corridor, scores within a tolerance, same settlement tier.
+# validator (`_agree`).
 #
 # Settlement is pull-payment and solvency is an explicit invariant:
 #     balance == locked_escrow + locked_bonds + total_claimable + treasury
 #
-#   score >= threshold   APPROVED  developer earns escrow + bond back
-#   40 <= score < thr    REJECTED  funder earns escrow back, bond refunded
-#   score < 40           REJECTED  funder earns escrow back, bond forfeited
-#                                  (50% funder compensation / 50% treasury)
-#   repo / commit 404    DISPUTED  fail-closed, bond refunded, escrow stays
-#                                  locked for a re-submission or cancellation
+#   score >= threshold            APPROVED  developer earns escrow + bond back
+#   score <  threshold            REJECTED  funder earns escrow back, bond refunded
+#   ... and the deliverable is    REJECTED  funder earns escrow back, bond forfeited
+#   empty, carries a known        (50% funder compensation / 50% treasury)
+#   malicious payload, or the
+#   model scores it < 40
+#   repo / commit unreachable,    DISPUTED  fail-closed: bond refunded, escrow stays
+#   blocked, historical or                  locked for a re-submission / cancellation
+#   foreign
+#   DELIVERED > 7 days            cancel_stuck_delivery by funder or developer
+#                                 refunds both sides
 
 import json
 import re
@@ -43,11 +51,16 @@ allow_storage = gl.storage.allow
 ATTO = 10**18
 DEVELOPER_BOND = ATTO // 20  # 0.05 GEN
 DEFAULT_THRESHOLD = 85
-FRAUD_SCORE = 40  # below this the deliverable is treated as spam / fabricated
-MIN_THRESHOLD = 50
+FRAUD_SCORE = 40  # a model score below this marks a deliverable as spam
+MIN_THRESHOLD = 70  # above the corridor floor, so the model stays consequential
 OPEN_CANCEL_DELAY = 14 * 86400  # funder may cancel an untouched OPEN grant
+STUCK_DELIVERY_DELAY = 7 * 86400  # DELIVERED this long => cancel_stuck_delivery
 MAX_ATTEMPTS = 3  # deliverable submissions per grant (DISPUTED re-submits)
 FORFEIT_FUNDER_PCT = 50  # share of a forfeited bond paid to the funder
+MAX_REPORT_CHARS = 1000  # audit_report storage bound
+MAX_FORBIDDEN = 10
+MIN_FORBIDDEN_LEN = 3
+CORRIDOR_FLOOR_PCT = 50  # lo = 50 * weakest ratio  (< MIN_THRESHOLD by construction)
 
 # --- Consensus tolerances ---------------------------------------------------
 SCORE_TOLERANCE = 12  # max |leader - validator| quality score difference
@@ -69,17 +82,45 @@ ERR_NO_BALANCE = "ERR_NO_CLAIMABLE_BALANCE"
 ERR_TRANSFER = "ERR_TRANSFER_FAILED_RESTORED"
 ERR_TOO_EARLY = "ERR_TOO_EARLY"
 ERR_ATTEMPTS = "ERR_MAX_ATTEMPTS"
+ERR_HISTORICAL = "ERR_HISTORICAL_COMMIT"
+ERR_PROVENANCE = "ERR_PROVENANCE_MISMATCH"
 ERR_TRANSIENT = "[TRANSIENT]"
 ERR_LLM = "[LLM_ERROR]"
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/?$")
+HANDLE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_./\-]{1,120}$")
+DECL_RE = re.compile(
+    r"\b(function|def|fn|func|fun|modifier|class|contract|interface|struct|library|event|error|"
+    r"public|private|protected|external|internal|static|async|override|virtual|const|let|var)\b"
+)
+
+# Fixed list of confirmed-malicious payload signatures. Only these (or an empty
+# commit, or a model score under 40) can forfeit a developer's bond; a funder-
+# chosen forbidden pattern can only lower the score.
+MALICIOUS_SIGNATURES = (
+    "/dev/tcp/", "bash -i >&", "nc -e /bin", "rm -rf /*", "rm -rf / ", "eval(base64",
+    "exec(base64", "os.system('curl", 'os.system("curl', "| bash", "|bash", "keylogger",
+)
+
+# Everyday tokens and keywords that would match almost any source file. A
+# forbidden pattern like these is a trap, not a security rule.
+COMMON_TOKENS = frozenset((
+    "the", "and", "for", "int", "var", "let", "def", "use", "new", "not", "get", "set", "map",
+    "key", "str", "if", "else", "elif", "while", "return", "class", "import", "from", "true",
+    "false", "null", "none", "self", "this", "void", "public", "private", "const", "string",
+    "uint", "bool", "address", "contract", "function", "static", "print", "try", "catch",
+    "with", "any", "all", "len", "value", "data", "name", "type", "msg", "sender", "require",
+    "assert", "emit", "event", "pragma", "solidity", "mapping", "memory", "storage", "external",
+    "internal", "view", "pure", "payable", "returns", "uint256", "bytes", "array", "list",
+    "dict", "main", "test", "error", "revert", "super", "init", "args", "async", "await",
+))
 
 TEL_KEYS = (
     "files_total", "additions", "deletions", "req_files_total", "req_files_found",
-    "methods_total", "methods_found", "forbidden_hits", "has_report", "tests_passed",
-    "tests_failed", "coverage",
+    "methods_total", "methods_found", "forbidden_hits", "malicious_hits", "tests_passed",
+    "tests_failed",
 )
 
 
@@ -94,6 +135,19 @@ def _sanitize(text: str, limit: int = 400) -> str:
             out.append(ch)
     s = "".join(out).replace("<", "(").replace(">", ")")
     return s[:limit]
+
+
+def _sanitize_code(text: str, limit: int = 5000) -> str:
+    """Prepare SOURCE CODE for the prompt. Unlike `_sanitize` this keeps `<` and `>`:
+    they are operators (`<=`, `->`, generics), and rewriting them makes the model grade
+    code that does not compile. Only a forged `<untrusted_...>` / `</untrusted_...>` tag
+    is defused, which is all the prompt's isolation boundary needs."""
+    out = []
+    for ch in str(text):
+        if ch in "\n\t" or (32 <= ord(ch) < 127) or ord(ch) > 159:
+            out.append(ch)
+    cleaned = re.sub(r"<(/?)untrusted", r"(\1untrusted", "".join(out), flags=re.IGNORECASE)
+    return cleaned[:limit]
 
 
 def _valid_sha(sha: str) -> bool:
@@ -115,14 +169,30 @@ def _parse_repo(url: str):
     return (m.group(1), repo)
 
 
+def _pattern_ok(pat: str) -> bool:
+    """Reject trap patterns: too short, everyday keywords, single repeated or vowel-only."""
+    if len(pat) < MIN_FORBIDDEN_LEN or len(pat) > 120:
+        return False
+    low = pat.lower().strip()
+    if len(low) < MIN_FORBIDDEN_LEN or low in COMMON_TOKENS:
+        return False
+    if len(set(low)) == 1:
+        return False
+    if all(ch in "aeiou" for ch in low):
+        return False
+    return True
+
+
 def _parse_spec(raw: str) -> dict:
     """Validate and normalise acceptance criteria. Raises UserError if malformed.
 
     Schema (all keys optional):
       required_files      [path, ...]       must appear in the commit's file list
-      required_methods    [identifier, ...] must appear in added code
-      min_coverage        0..100            required % line coverage
-      forbidden_patterns  [substring, ...]  must NOT appear in added code
+      required_methods    [identifier, ...] must be DECLARED in executable added code
+      forbidden_patterns  [substring, ...]  >= 3 chars, <= 10 entries, not everyday
+                                            keywords; each hit lowers the score ceiling
+      min_coverage        0..100            informational: coverage is not verifiable
+                                            from check-runs, so it never raises a score
       security_invariants [text, ...]       graded qualitatively by the LLM
       architecture        text              design notes graded by the LLM
     """
@@ -146,6 +216,12 @@ def _parse_spec(raw: str) -> dict:
             out.append(_sanitize(item, 120))
         return out
 
+    forbidden = str_list("forbidden_patterns", MAX_FORBIDDEN, False)
+    for pat in forbidden:
+        if not _pattern_ok(pat):
+            raise gl.vm.UserError(
+                f"{ERR_PARAMS} forbidden pattern '{pat[:20]}' is too generic (min "
+                f"{MIN_FORBIDDEN_LEN} chars, not a common keyword)")
     cov = spec.get("min_coverage", 0)
     if isinstance(cov, bool) or not isinstance(cov, int) or cov < 0 or cov > 100:
         raise gl.vm.UserError(f"{ERR_PARAMS} min_coverage must be an integer 0..100")
@@ -156,22 +232,142 @@ def _parse_spec(raw: str) -> dict:
         "required_files": str_list("required_files", 12, True),
         "required_methods": str_list("required_methods", 24, True),
         "min_coverage": cov,
-        "forbidden_patterns": str_list("forbidden_patterns", 12, False),
+        "forbidden_patterns": forbidden,
         "security_invariants": str_list("security_invariants", 12, False),
         "architecture": _sanitize(arch, 600),
     }
 
 
-def _bounds(tel: dict, min_coverage: int):
+def _strip_lines(lines: list, hash_style: bool, resets: list):
+    """Remove comments and docstrings, line by line, with state carried across lines.
+
+    Returns (keep, blank): `keep` retains string literals (for payload signatures
+    and forbidden patterns), `blank` empties them (for declaration matching, so a
+    method name inside a string never counts). Line count is preserved. A True in
+    `resets` marks a hunk boundary, where carried block/docstring state is dropped.
+    """
+    keep_lines = []
+    blank_lines = []
+    in_block = False
+    triple = ""
+    for idx, line in enumerate(lines):
+        if resets[idx]:
+            in_block = False
+            triple = ""
+        keep = []
+        blank = []
+        i = 0
+        n = len(line)
+        while i < n:
+            c = line[i]
+            two = line[i:i + 2]
+            three = line[i:i + 3]
+            if in_block:
+                if two == "*/":
+                    in_block = False
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if triple != "":
+                if three == triple:
+                    triple = ""
+                    i += 3
+                else:
+                    i += 1
+                continue
+            if hash_style:
+                if c == "#":
+                    break
+                if three == '"""' or three == "'''":
+                    triple = three
+                    i += 3
+                    continue
+            else:
+                if two == "//":
+                    break
+                if two == "/*":
+                    in_block = True
+                    i += 2
+                    continue
+            if c == '"' or c == "'" or c == "`":
+                j = i + 1
+                while j < n and line[j] != c:
+                    if line[j] == "\\":
+                        j += 1
+                    j += 1
+                keep.append(line[i:j + 1])
+                blank.append(c + c)
+                i = j + 1
+                continue
+            keep.append(c)
+            blank.append(c)
+            i += 1
+        keep_lines.append("".join(keep))
+        blank_lines.append("".join(blank))
+    return keep_lines, blank_lines
+
+
+def _is_hash_style(filename: str) -> bool:
+    low = filename.lower()
+    for ext in (".py", ".sh", ".rb", ".yml", ".yaml", ".toml", ".pl", ".r"):
+        if low.endswith(ext):
+            return True
+    return False
+
+
+def _code_of_patch(filename: str, patch: str):
+    """(keep_text, blank_lines) of the ADDED executable code in one file's patch.
+
+    Context lines are run through the stripper too, so a block comment opened on an
+    unchanged line still swallows the added lines inside it.
+    """
+    body = []
+    flags = []
+    resets = []
+    for ln in patch.split("\n"):
+        if ln.startswith("@@"):
+            body.append("")
+            flags.append(False)
+            resets.append(True)
+        elif ln.startswith("-"):
+            continue
+        elif ln.startswith("+") and not ln.startswith("+++"):
+            body.append(ln[1:])
+            flags.append(True)
+            resets.append(False)
+        else:
+            body.append(ln[1:] if ln[:1] == " " else ln)
+            flags.append(False)
+            resets.append(False)
+    keep_all, blank_all = _strip_lines(body, _is_hash_style(filename), resets)
+    added_keep = []
+    added_blank = []
+    for added, k, b in zip(flags, keep_all, blank_all):
+        if added:
+            added_keep.append(k)
+            added_blank.append(b)
+    return "\n".join(added_keep), added_blank
+
+
+def _declares(blank_lines: list, name: str) -> bool:
+    word = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+    for ln in blank_lines:
+        if DECL_RE.search(ln) is not None and word.search(ln) is not None:
+            return True
+    return False
+
+
+def _bounds(tel: dict):
     """Mathematical score corridor [lo, hi] implied by objective evidence alone.
 
-    Four satisfaction ratios (required files, required methods, test results,
-    coverage) each lie in [0, 1]. The WEAKEST one governs: hi = 100*min + 10 and
-    lo = 60*min, so a deliverable that misses a hard requirement cannot be
-    averaged into an approval by excelling elsewhere. Each forbidden-pattern hit
-    then costs 15 points of ceiling, and an empty commit is capped at 20. The
-    LLM's score is clamped into [lo, hi], so prose cannot outvote measurements
-    and a commit with nothing in it can never reach a payout tier.
+    Three satisfaction ratios in [0, 1]: required files, required methods, and CI
+    (authentic GitHub Actions check-runs: at least one success; any failure halves
+    it; no verified run at all is 0, which fails closed). The WEAKEST governs:
+    hi = 100*min + 10 and lo = 50*min. The floor stays below MIN_THRESHOLD, so the
+    model can always pull a deliverable under the bar. Each forbidden-pattern hit
+    costs 15 points of ceiling, an empty commit is capped at 20, and a known
+    malicious payload caps the ceiling at 0.
     """
     files_ratio = 1.0
     if tel["req_files_total"] > 0:
@@ -180,41 +376,40 @@ def _bounds(tel: dict, min_coverage: int):
     if tel["methods_total"] > 0:
         methods_ratio = tel["methods_found"] / tel["methods_total"]
 
-    total_tests = tel["tests_passed"] + tel["tests_failed"]
-    if total_tests == 0:
+    if tel["tests_passed"] <= 0:
         tests_ratio = 0.0
     else:
-        tests_ratio = tel["tests_passed"] / total_tests
+        tests_ratio = tel["tests_passed"] / (tel["tests_passed"] + tel["tests_failed"])
         if tel["tests_failed"] > 0:
             tests_ratio *= 0.5
 
-    if min_coverage <= 0:
-        cov_ratio = 1.0
-    elif tel["has_report"] and tel["coverage"] >= 0:
-        cov_ratio = min(1.0, tel["coverage"] / min_coverage)
-    else:
-        cov_ratio = 0.0
-
-    weakest = min(files_ratio, methods_ratio, tests_ratio, cov_ratio)
-    lo = int(60 * weakest)
+    weakest = min(files_ratio, methods_ratio, tests_ratio)
+    lo = int(CORRIDOR_FLOOR_PCT * weakest)
     hi = int(100 * weakest + 10.0)
     hi -= 15 * tel["forbidden_hits"]
     if tel["files_total"] == 0 or tel["additions"] == 0:
         hi = min(hi, 20)
+    if tel["malicious_hits"] > 0:
+        hi = 0
     hi = max(0, min(100, hi))
     lo = max(0, min(lo, hi))
     return lo, hi
 
 
-def _tier(score: int, threshold: int) -> str:
+def _is_fraud(tel: dict, llm_score: int) -> bool:
+    """Bond-forfeiting conditions. Spec-controlled signals (forbidden patterns,
+    missing methods) can lower a score but can never slash a developer."""
+    empty = tel["files_total"] == 0 or tel["additions"] == 0
+    return empty or tel["malicious_hits"] > 0 or llm_score < FRAUD_SCORE
+
+
+def _tier(score: int, threshold: int, fraud: bool) -> str:
     if score >= threshold:
         return "PASS"
-    if score >= FRAUD_SCORE:
-        return "FAIL"
-    return "FRAUD"
+    return "FRAUD" if fraud else "FAIL"
 
 
-def _agree(leader: dict, mine: dict, threshold: int, min_coverage: int) -> bool:
+def _agree(leader: dict, mine: dict, threshold: int) -> bool:
     """Equivalence predicate between the leader's result and a validator's own."""
     if not isinstance(leader, dict) or not isinstance(mine, dict):
         return False
@@ -232,13 +427,18 @@ def _agree(leader: dict, mine: dict, threshold: int, min_coverage: int) -> bool:
     score = leader.get("score")
     if isinstance(score, bool) or not isinstance(score, int):
         return False
+    if not isinstance(leader.get("fraud"), bool):
+        return False
     # The leader must have respected the corridor the validator derives itself.
-    lo, hi = _bounds(mt, min_coverage)
+    lo, hi = _bounds(mt)
     if score < lo or score > hi:
         return False
     if abs(score - int(mine["score"])) > SCORE_TOLERANCE:
         return False
-    return _tier(score, threshold) == _tier(int(mine["score"]), threshold)
+    if leader["fraud"] != mine["fraud"]:
+        return False
+    return _tier(score, threshold, leader["fraud"]) == _tier(
+        int(mine["score"]), threshold, mine["fraud"])
 
 
 def _http_get(url: str):
@@ -265,27 +465,72 @@ def _text_of(res) -> str:
     return str(body)
 
 
-def _gather(owner: str, repo: str, sha: str, spec: dict) -> dict:
+def _rate_limited(res) -> bool:
+    """A 403 is a rate limit only if GitHub says so; otherwise it is a block."""
+    headers = getattr(res, "headers", None)
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            if str(k).lower() == "x-ratelimit-remaining":
+                val = v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v)
+                if val.strip() == "0":
+                    return True
+    try:
+        return "rate limit" in _text_of(res).lower()
+    except Exception:
+        return False
+
+
+def _parse_ts(value) -> int:
+    try:
+        dt = datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")
+        return int(dt.replace(tzinfo=timezone.utc).timestamp())
+    except Exception:
+        return -1
+
+
+def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at: int) -> dict:
     """Deterministic GitHub ingestion. Returns an evidence dict.
 
-    {"reachable": False, "reason": ...}  repo/commit absent -> fail-closed
-    raises [TRANSIENT]                   rate limit / 5xx   -> transaction retries
+    {"ok": False, "reason": ...}   no usable evidence -> terminal INCONCLUSIVE
+    raises [TRANSIENT]             rate limit / 5xx    -> transaction retries
     """
     base = f"https://api.github.com/repos/{owner}/{repo}"
     res = _http_get(f"{base}/commits/{sha}")
     status = _status_of(res)
+    if status == 403 and not _rate_limited(res):
+        return {"ok": False, "reason": "REPO_BLOCKED"}  # DMCA / blocked / private
+    if status == 451:
+        return {"ok": False, "reason": "REPO_BLOCKED"}
     if status == 429 or status == 403 or status >= 500 or status == 0:
         raise gl.vm.UserError(f"{ERR_TRANSIENT} GitHub returned {status}")
     if status in (404, 410, 422):
-        return {"reachable": False, "reason": "COMMIT_NOT_FOUND"}
+        return {"ok": False, "reason": "COMMIT_NOT_FOUND"}
     if status < 200 or status >= 300:
-        return {"reachable": False, "reason": "COMMIT_UNREACHABLE"}
+        return {"ok": False, "reason": "COMMIT_UNREACHABLE"}
     try:
         data = json.loads(_text_of(res))
     except Exception:
-        return {"reachable": False, "reason": "COMMIT_UNREADABLE"}
+        return {"ok": False, "reason": "COMMIT_UNREADABLE"}
     if not isinstance(data, dict) or str(data.get("sha", "")).lower() != sha:
-        return {"reachable": False, "reason": "COMMIT_SHA_MISMATCH"}
+        return {"ok": False, "reason": "COMMIT_SHA_MISMATCH"}
+
+    # --- provenance: the commit must belong to the registered developer --------
+    want = handle.lower()
+    author = data.get("author") if isinstance(data.get("author"), dict) else {}
+    committer = data.get("committer") if isinstance(data.get("committer"), dict) else {}
+    author_login = str(author.get("login", "")).lower()
+    committer_login = str(committer.get("login", "")).lower()
+    owns_repo = owner.lower() == want
+    wrote_it = author_login == want and committer_login == want
+    if not (owns_repo or wrote_it):
+        return {"ok": False, "reason": ERR_PROVENANCE}
+
+    # --- freshness: authored and committed after the grant existed -------------
+    cmeta = data.get("commit") if isinstance(data.get("commit"), dict) else {}
+    a_ts = _parse_ts((cmeta.get("author") or {}).get("date", ""))
+    c_ts = _parse_ts((cmeta.get("committer") or {}).get("date", ""))
+    if a_ts < 0 or c_ts < 0 or min(a_ts, c_ts) < created_at:
+        return {"ok": False, "reason": ERR_HISTORICAL}
 
     files = data.get("files")
     if not isinstance(files, list):
@@ -293,19 +538,21 @@ def _gather(owner: str, repo: str, sha: str, spec: dict) -> dict:
     names = set()
     additions = 0
     deletions = 0
-    added_code = []
+    keep_texts = []
+    blank_by_file = []
     for f in files:
         if not isinstance(f, dict):
             continue
-        names.add(str(f.get("filename", "")))
+        fname = str(f.get("filename", ""))
+        names.add(fname)
         additions += int(f.get("additions", 0) or 0)
         deletions += int(f.get("deletions", 0) or 0)
         patch = f.get("patch")
         if isinstance(patch, str):
-            for line in patch.split("\n"):
-                if line.startswith("+") and not line.startswith("+++"):
-                    added_code.append(line[1:])
-    code_blob = "\n".join(added_code)
+            keep_text, blank_lines = _code_of_patch(fname, patch)
+            keep_texts.append(keep_text)
+            blank_by_file.append(blank_lines)
+    code_keep = "\n".join(keep_texts)
 
     req_found = 0
     for path in spec["required_files"]:
@@ -313,52 +560,43 @@ def _gather(owner: str, repo: str, sha: str, spec: dict) -> dict:
             req_found += 1
     methods_found = 0
     for m in spec["required_methods"]:
-        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(m) + r"(?![A-Za-z0-9_])", code_blob):
+        if any(_declares(lines, m) for lines in blank_by_file):
             methods_found += 1
     forbidden = 0
     for pat in spec["forbidden_patterns"]:
-        if pat in code_blob:
+        if pat in code_keep:
             forbidden += 1
+    malicious = 0
+    for sig in MALICIOUS_SIGNATURES:
+        if sig in code_keep:
+            malicious += 1
 
-    # Test telemetry: a committed report wins, CI check-runs are the fallback.
+    # --- tests: ONLY authentic GitHub Actions check-runs -----------------------
+    # A committed report file is developer-controlled and is never read.
     passed = 0
     failed = 0
-    coverage = -1
-    has_report = False
-    rep = _http_get(f"https://raw.githubusercontent.com/{owner}/{repo}/{sha}/.codeproof/report.json")
-    rs = _status_of(rep)
-    if rs == 429 or rs >= 500 or rs == 0:
-        raise gl.vm.UserError(f"{ERR_TRANSIENT} report fetch returned {rs}")
-    if 200 <= rs < 300:
+    cr = _http_get(f"{base}/commits/{sha}/check-runs?per_page=100")
+    cs = _status_of(cr)
+    if cs == 429 or cs >= 500 or cs == 0 or (cs == 403 and _rate_limited(cr)):
+        raise gl.vm.UserError(f"{ERR_TRANSIENT} check-runs returned {cs}")
+    if 200 <= cs < 300:
         try:
-            r = json.loads(_text_of(rep))
-            passed = max(0, int(r.get("tests_passed", 0)))
-            failed = max(0, int(r.get("tests_failed", 0)))
-            coverage = max(-1, min(100, int(r.get("coverage", -1))))
-            has_report = True
+            for run in json.loads(_text_of(cr)).get("check_runs", []):
+                app = run.get("app") if isinstance(run.get("app"), dict) else {}
+                if app.get("slug") != "github-actions":
+                    continue
+                concl = run.get("conclusion")
+                if concl == "success":
+                    passed += 1
+                elif concl in ("failure", "timed_out", "cancelled", "action_required"):
+                    failed += 1
         except Exception:
-            has_report = False
-    if not has_report:
-        cr = _http_get(f"{base}/commits/{sha}/check-runs?per_page=100")
-        cs = _status_of(cr)
-        if cs == 429 or cs >= 500 or cs == 0:
-            raise gl.vm.UserError(f"{ERR_TRANSIENT} check-runs returned {cs}")
-        if 200 <= cs < 300:
-            try:
-                runs = json.loads(_text_of(cr)).get("check_runs", [])
-                for run in runs:
-                    concl = run.get("conclusion")
-                    if concl == "success":
-                        passed += 1
-                    elif concl in ("failure", "timed_out", "cancelled", "action_required"):
-                        failed += 1
-            except Exception:
-                passed = 0
-                failed = 0
+            passed = 0
+            failed = 0
 
-    message = str(data.get("commit", {}).get("message", "")).split("\n")[0]
+    message = str(cmeta.get("message", "")).split("\n")[0]
     return {
-        "reachable": True,
+        "ok": True,
         "tel": {
             "files_total": len(names),
             "additions": additions,
@@ -368,14 +606,13 @@ def _gather(owner: str, repo: str, sha: str, spec: dict) -> dict:
             "methods_total": len(spec["required_methods"]),
             "methods_found": methods_found,
             "forbidden_hits": forbidden,
-            "has_report": has_report,
+            "malicious_hits": malicious,
             "tests_passed": passed,
             "tests_failed": failed,
-            "coverage": coverage,
         },
         "message": _sanitize(message, 200),
         "files": sorted(_sanitize(n, 120) for n in names)[:30],
-        "code": _sanitize(code_blob, 5000),
+        "code": _sanitize_code(code_keep, 5000),
     }
 
 
@@ -389,18 +626,19 @@ def _build_prompt(title: str, spec: dict, threshold: int, ev: dict, lo: int, hi:
         "=== 2. ACCEPTANCE CRITERIA ===\n"
         f"required files: {spec['required_files']}\n"
         f"required methods: {spec['required_methods']}\n"
-        f"minimum coverage: {spec['min_coverage']}%\n"
+        f"coverage target (informational, not verifiable): {spec['min_coverage']}%\n"
         f"security invariants: {spec['security_invariants']}\n"
         f"architecture: {spec['architecture']}\n"
         f"pass threshold: {threshold}/100\n\n"
         "=== 3. MEASURED FACTS (from code, not negotiable) ===\n"
         f"files changed: {t['files_total']} (+{t['additions']} / -{t['deletions']})\n"
         f"required files present: {t['req_files_found']}/{t['req_files_total']}\n"
-        f"required methods found in added code: {t['methods_found']}/{t['methods_total']}\n"
+        f"required methods declared in executable code: {t['methods_found']}/{t['methods_total']}\n"
         f"forbidden patterns found: {t['forbidden_hits']}\n"
-        f"tests passed: {t['tests_passed']}, failed: {t['tests_failed']}, "
-        f"coverage: {t['coverage'] if t['has_report'] else 'not reported'}\n"
-        f"Your score will be clamped into the corridor [{lo}, {hi}].\n\n"
+        f"authentic CI check-runs passed: {t['tests_passed']}, failed: {t['tests_failed']}\n"
+        f"Your score will be clamped into the corridor [{lo}, {hi}].\n"
+        "If the code is non-functional, insecure or does not do what the milestone asks, "
+        "score it below the threshold even when the measurements are clean.\n\n"
         f"=== 4. COMMIT ===\n<untrusted_commit_message>{ev['message']}</untrusted_commit_message>\n"
         f"files: {ev['files']}\n"
         f"<untrusted_added_code>\n{ev['code']}\n</untrusted_added_code>\n\n"
@@ -468,6 +706,7 @@ def _handle_leader_error(leaders_res, leader_fn) -> bool:
 class Grant:
     funder: Address
     developer: Address
+    developer_handle: str
     title: str
     escrow_amount: u256
     threshold_score: u256
@@ -479,6 +718,7 @@ class Grant:
     status: str
     developer_bond: u256
     created_at: u256
+    delivered_at: u256
     attempts: u256
     evaluated: bool
 
@@ -541,6 +781,7 @@ class CodeProof(gl.contract.Contract):
             "grant_id": gid,
             "funder": g.funder.as_hex,
             "developer": g.developer.as_hex,
+            "developer_handle": g.developer_handle,
             "title": g.title,
             "escrow_amount": str(g.escrow_amount),
             "threshold_score": int(g.threshold_score),
@@ -552,6 +793,7 @@ class CodeProof(gl.contract.Contract):
             "status": g.status,
             "developer_bond": str(g.developer_bond),
             "created_at": int(g.created_at),
+            "delivered_at": int(g.delivered_at),
             "attempts": int(g.attempts),
             "evaluated": g.evaluated,
         }
@@ -608,15 +850,26 @@ class CodeProof(gl.contract.Contract):
         return str(self.claimable[key]) if key in self.claimable else "0"
 
     @gl.public.view
-    def compute_bounds(self, telemetry_json: str, min_coverage: int) -> dict:
+    def compute_bounds(self, telemetry_json: str) -> dict:
         """The deterministic score corridor for a telemetry object (transparency)."""
         try:
             raw = json.loads(telemetry_json)
-            tel = {k: (bool(raw[k]) if k == "has_report" else int(raw[k])) for k in TEL_KEYS}
+            tel = {k: int(raw[k]) for k in TEL_KEYS}
         except Exception:
             raise gl.vm.UserError(f"{ERR_PARAMS} telemetry_json malformed")
-        lo, hi = _bounds(tel, min_coverage)
+        lo, hi = _bounds(tel)
         return {"lo": lo, "hi": hi}
+
+    @gl.public.view
+    def preview_code(self, filename: str, patch: str, method: str) -> dict:
+        """What the oracle sees in a patch once comments, docstrings and strings are
+        stripped: whether `method` is declared in executable code (transparency)."""
+        keep, blank = _code_of_patch(filename, patch)
+        return {"declared": _declares(blank, method), "code": keep[:2000]}
+
+    @gl.public.view
+    def is_valid_forbidden_pattern(self, pattern: str) -> bool:
+        return _pattern_ok(pattern)
 
     @gl.public.view
     def is_valid_commit_sha(self, commit_sha: str) -> bool:
@@ -628,7 +881,8 @@ class CodeProof(gl.contract.Contract):
 
     # ---------------------------------------------------------------- writes
     @gl.public.write.payable
-    def create_grant(self, developer: str, title: str, threshold: int, spec_criteria: str) -> int:
+    def create_grant(self, developer: str, title: str, threshold: int, spec_criteria: str,
+                     developer_handle: str) -> int:
         if gl.message.value == 0:
             raise gl.vm.UserError(f"{ERR_VALUE} grant funding required")
         if threshold == 0:
@@ -638,6 +892,9 @@ class CodeProof(gl.contract.Contract):
         clean_title = _sanitize(title, 160).strip()
         if clean_title == "":
             raise gl.vm.UserError(f"{ERR_PARAMS} title required")
+        handle = str(developer_handle).strip()
+        if HANDLE_RE.match(handle) is None:
+            raise gl.vm.UserError(f"{ERR_PARAMS} developer_handle must be a GitHub username")
         try:
             dev = Address(developer)
         except Exception:
@@ -649,6 +906,7 @@ class CodeProof(gl.contract.Contract):
         self.grants[u256(gid)] = Grant(
             funder=gl.message.sender_address,
             developer=dev,
+            developer_handle=handle,
             title=clean_title,
             escrow_amount=gl.message.value,
             threshold_score=threshold,
@@ -660,6 +918,7 @@ class CodeProof(gl.contract.Contract):
             status=OPEN,
             developer_bond=0,
             created_at=self._now(),
+            delivered_at=0,
             attempts=0,
             evaluated=False,
         )
@@ -688,6 +947,7 @@ class CodeProof(gl.contract.Contract):
         g.commit_sha = sha
         g.developer_bond = gl.message.value
         g.status = DELIVERED
+        g.delivered_at = self._now()
         g.attempts = int(g.attempts) + 1
         g.audit_report = ""
         self.locked_bonds += gl.message.value
@@ -704,14 +964,15 @@ class CodeProof(gl.contract.Contract):
         sha = g.commit_sha
         title = g.title
         threshold = int(g.threshold_score)
+        handle = g.developer_handle
+        created_at = int(g.created_at)
         spec = json.loads(g.spec_criteria)
-        min_cov = int(spec["min_coverage"])
 
         def leader_fn() -> dict:
-            ev = _gather(owner, name, sha, spec)
-            if not ev["reachable"]:
+            ev = _gather(owner, name, sha, spec, handle, created_at)
+            if not ev["ok"]:
                 return {"status": "INCONCLUSIVE", "reason": ev["reason"]}
-            lo, hi = _bounds(ev["tel"], min_cov)
+            lo, hi = _bounds(ev["tel"])
             try:
                 raw = gl.nondet.exec_prompt(
                     _build_prompt(title, spec, threshold, ev, lo, hi), response_format="json"
@@ -723,6 +984,8 @@ class CodeProof(gl.contract.Contract):
             return {
                 "status": "OK",
                 "score": score,
+                "llm_score": graded["score"],
+                "fraud": _is_fraud(ev["tel"], graded["score"]),
                 "rationale": graded["rationale"],
                 "tel": ev["tel"],
                 "lo": lo,
@@ -737,7 +1000,7 @@ class CodeProof(gl.contract.Contract):
                 mine = leader_fn()
             except gl.vm.UserError:
                 return False
-            return _agree(leaders_res.calldata, mine, threshold, min_cov)
+            return _agree(leaders_res.calldata, mine, threshold)
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
         return self._settle(grant_id, result)
@@ -751,27 +1014,31 @@ class CodeProof(gl.contract.Contract):
 
         if result["status"] != "OK":
             # Fail-closed: no verdict on missing evidence. Bond back, escrow stays locked.
+            reason = _sanitize(str(result.get("reason", "UNKNOWN")), 60)
             g.status = DISPUTED
-            g.audit_report = f"INCONCLUSIVE: {result['reason']}. Evidence unreachable; bond refunded."
+            g.audit_report = _sanitize(
+                f"INCONCLUSIVE: {reason}. No verdict on unverifiable evidence; bond refunded.",
+                MAX_REPORT_CHARS)
             self._credit(g.developer, bond)
             return DISPUTED
 
-        score = int(result["score"])
+        score = max(0, min(100, int(result["score"])))
         tel = result["tel"]
-        tier = _tier(score, int(g.threshold_score))
+        fraud = bool(result["fraud"])
+        tier = _tier(score, int(g.threshold_score), fraud)
         g.quality_score = score
         g.evaluated = True
         self.score_sum += score
         self.score_count += 1
-        report = (
-            f"score={score}/100 corridor=[{result['lo']},{result['hi']}] tier={tier} "
-            f"files={tel['files_total']} +{tel['additions']}/-{tel['deletions']} "
-            f"req_files={tel['req_files_found']}/{tel['req_files_total']} "
-            f"methods={tel['methods_found']}/{tel['methods_total']} "
-            f"tests={tel['tests_passed']}ok/{tel['tests_failed']}fail "
-            f"forbidden={tel['forbidden_hits']} | {result['rationale']}"
-        )
-        g.audit_report = report
+        g.audit_report = _sanitize(
+            f"score={score}/100 corridor=[{int(result['lo'])},{int(result['hi'])}] tier={tier} "
+            f"files={int(tel['files_total'])} +{int(tel['additions'])}/-{int(tel['deletions'])} "
+            f"req_files={int(tel['req_files_found'])}/{int(tel['req_files_total'])} "
+            f"methods={int(tel['methods_found'])}/{int(tel['methods_total'])} "
+            f"ci={int(tel['tests_passed'])}ok/{int(tel['tests_failed'])}fail "
+            f"forbidden={int(tel['forbidden_hits'])} malicious={int(tel['malicious_hits'])} | "
+            f"{_sanitize(str(result.get('rationale', '')), 400)}",
+            MAX_REPORT_CHARS)
 
         self.locked_escrow -= escrow
         if tier == "PASS":
@@ -789,6 +1056,29 @@ class CodeProof(gl.contract.Contract):
             self._credit(g.funder, to_funder)
             self.treasury += bond - to_funder
         return REJECTED
+
+    @gl.public.write
+    def cancel_stuck_delivery(self, grant_id: int) -> None:
+        """Exit path for a delivery that consensus cannot resolve (endless rate limits,
+        a model that never agrees): after 7 days either party unlocks everything.
+        Escrow returns to the funder, the bond to the developer."""
+        g = self._grant(grant_id)
+        caller = gl.message.sender_address
+        if caller != g.funder and caller != g.developer:
+            raise gl.vm.UserError(f"{ERR_UNAUTHORIZED} only the funder or the developer")
+        if g.status != DELIVERED:
+            raise gl.vm.UserError(f"{ERR_STATE} grant is {g.status}, not DELIVERED")
+        if self._now() < int(g.delivered_at) + STUCK_DELIVERY_DELAY:
+            raise gl.vm.UserError(f"{ERR_TOO_EARLY} deliveries are cancellable after 7 days")
+        escrow = int(g.escrow_amount)
+        bond = int(g.developer_bond)
+        g.developer_bond = 0
+        self.locked_bonds -= bond
+        self.locked_escrow -= escrow
+        g.status = CANCELLED
+        g.audit_report = "CANCELLED: delivery unresolved for 7 days; escrow and bond refunded."
+        self._credit(g.funder, escrow)
+        self._credit(g.developer, bond)
 
     @gl.public.write
     def cancel_grant(self, grant_id: int) -> None:
