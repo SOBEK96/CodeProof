@@ -14,13 +14,13 @@ Funders lock a grant in GEN together with machine-readable acceptance criteria. 
 ## Live proofs
 
 <!-- LIVE-PROOFS:START -->
-Contract: [`0x5CFb886928A2d74e37Da4C602f6083CF71B532a8`](https://explorer-studio-next.genlayer.com/address/0x5CFb886928A2d74e37Da4C602f6083CF71B532a8)  
-Deploy tx: [`0x9eb757285295...`](https://explorer-studio-next.genlayer.com/tx/0x9eb7572852950f4c61776dd6bb3c8cb7944318132920a06fd6e38d2d4bdd165e)
+Contract: [`0x9902D0502512B3897Ee966F29a39e5334C585aFd`](https://explorer-studio-next.genlayer.com/address/0x9902D0502512B3897Ee966F29a39e5334C585aFd)  
+Deploy tx: [`0xe14b1037e89b...`](https://explorer-studio-next.genlayer.com/tx/0xe14b1037e89b6ed0faeb4f48cec71fd8dcad8d0bd2d169e46327a87bb65e4b03)
 
 | Grant | Status | Score | Evaluation tx |
 |---|---|---|---|
-| #1 EVM Token Bridge Implementation | APPROVED | 91/100 | [`0x41bbb1781718...`](https://explorer-studio-next.genlayer.com/tx/0x41bbb1781718213398bfd7df8e9b2a4b0d2813de9728ed77162a830b9642f66c) |
-| #2 Flash Loan Vault | REJECTED | 12/100 | [`0x0eb9f5844a16...`](https://explorer-studio-next.genlayer.com/tx/0x0eb9f5844a16daaae453c2b2002793e20aaaadef25df992a920096384d127a57) |
+| #1 EVM Token Bridge Implementation | APPROVED | 88/100 | [`0xd06ab520f4e9...`](https://explorer-studio-next.genlayer.com/tx/0xd06ab520f4e9754910bc305974b412e9c80a48b7b0c57b075e82db2c1351860b) |
+| #2 Flash Loan Vault | REJECTED | 12/100 | [`0xe900a755f767...`](https://explorer-studio-next.genlayer.com/tx/0xe900a755f7670b23dc1095da1d3bcf7b589cbb1a65616ed8cb8afd5a956d7e23) |
 | #3 Decentralized Identity Indexer | DELIVERED | 0/100 | pending (steward) |
 <!-- LIVE-PROOFS:END -->
 
@@ -32,9 +32,9 @@ Each grant is bound to the GitHub handle **`Handik4`**. The deliverables are **f
 
 | Grant | Commit | What it is |
 |---|---|---|
-| #1 EVM Token Bridge Implementation | `c6c70f6` | lock-and-release bridge ledger with a reentrancy guard, 6 tests |
-| #2 Flash Loan Vault | `500da60` | deliberately bad: no guard, no repayment check, no tests, a `TODO` |
-| #3 Decentralized Identity Indexer | `a6a3e49` | DID registry with rotation and history, 5 tests; left `DELIVERED` for you |
+| #1 EVM Token Bridge Implementation | `4d6f472` | lock-and-release bridge ledger with a reentrancy guard, 6 tests |
+| #2 Flash Loan Vault | `5b2c543` | deliberately bad: no guard, no repayment check, no tests, a `TODO` |
+| #3 Decentralized Identity Indexer | `c2a8196` | DID registry with rotation and history, 5 tests; left `DELIVERED` for you |
 
 Scores are whatever the validators agreed on; they were recorded, not forced. Caveat: the flash-vault commit's CI is green only because the repository still contains the bridge tests (`pytest` collects them). The oracle never claims more than "a GitHub Actions run succeeded", and the grant is rejected on its missing file, missing methods and the model's reading of the code.
 
@@ -42,15 +42,18 @@ Scores are whatever the validators agreed on; they were recorded, not forced. Ca
 
 | Contract | Why it was replaced |
 |---|---|
-| `0xe1d5F76F...7eBd6` | v1: audit findings #1-#6 unpatched |
+| `0xe1d5F76F...7eBd6` | v1: round-1 audit findings #1-#6 unpatched |
 | `0xD7670320...29892` | v2: patched, but the prompt sanitiser rewrote `<` and `>` inside the code under review, so the model graded `if amount (= 0:` and rejected a correct commit as a syntax error. Found on the first live run; fixed in v3 with a regression test |
+| `0x5CFb8869...532a8` | v3: round-1 fixes plus the sanitiser fix; replaced by v4 for the round-2 findings (author binding, structural declarations, code-only scanning, workflow integrity) |
 
-## Audit findings and fixes (v3)
+Each record, with its grants and transaction hashes, is preserved under `superseded_deployments` in [`deployments/studio-next.json`](deployments/studio-next.json). The current contract is **v4**, source SHA-256 `d01982e9b45cd70d827949b1b06123f546c1c87f0926fce5308cb4d773749838`.
+
+## Audit findings and fixes (v3, round 1)
 
 | # | Severity | Finding | Fix | Regression tests |
 |---|---|---|---|---|
 | 1 | Critical | A committed `.codeproof/report.json` could claim 999 passing tests and 100% coverage | The file is **never read**. Test telemetry comes only from the commit's GitHub **Actions check-runs** (`app.slug == "github-actions"`): a success is needed, a failure halves the score, and no authentic run clamps the CI component to 0 (ceiling 10). Coverage cannot be verified from check-runs, so `min_coverage` is informational and never raises a score | `test_spoofed_report_json_rejected`, `..._never_requested`, third-party and neutral check-run cases |
-| 2 | Critical | Anyone could submit another developer's historical commit | `create_grant` registers a **`developer_handle`**. The commit must sit in a repository **owned by that handle**, or be authored **and** committed by it. The older of author/committer dates must be `>= grant.created_at`. Failures settle as `DISPUTED` with `ERR_PROVENANCE_MISMATCH` / `ERR_HISTORICAL_COMMIT` | `test_historical_commit_rejected`, `test_foreign_repo_commit_rejected`, rebase and date-parsing cases |
+| 2 | Critical | Anyone could submit another developer's historical commit | `create_grant` registers a **`developer_handle`**. v3 accepted a commit in a repository owned by that handle; **v4 requires the commit's author to be the handle** (see round 2). The older of author/committer dates must be `>= grant.created_at`. Failures settle as `DISPUTED` with `ERR_UNAUTHORIZED_AUTHOR` / `ERR_HISTORICAL_COMMIT` | `test_historical_commit_rejected`, `test_foreign_repo_commit_rejected`, rebase and date-parsing cases |
 | 3 | High | `required_methods` matched names inside comments | Comments (`//`, `#`, `/* */`), docstrings and string literals are stripped (state carried across diff context lines), and a method counts only on a **declaration line**, not a call site. `forbidden_patterns` also ignore comments | `test_methods_in_comments_ignored`, an 18-case declaration matrix, `preview_code` view |
 | 4 | Medium | With threshold <= 60 the corridor floor of 60 passed model score 0 | `MIN_THRESHOLD = 70`; corridor floor is now `50 x weakest ratio`, always below any legal threshold, so the model stays consequential | `test_low_threshold_cannot_bypass_llm` |
 | 5 | Medium | A funder could set `["a","e","i","o","u"]` and slash the developer | Patterns need `len >= 3`, at most 10, and not a common keyword. A hit only lowers the score ceiling by 15. **Only** a fixed list of malicious signatures, an empty commit, or a model score under 40 forfeits the bond | `test_forbidden_patterns_sanitized` (20 traps), `test_non_malicious_forbidden_hit_does_not_slash_bond` |
@@ -65,14 +68,35 @@ Interface changes: `create_grant(developer, title, threshold, spec_criteria, dev
 
 Known limits: a workflow that runs `echo ok` is still a green check-run, so CI is evidence of execution, not of test quality; the model and the required-method declarations carry the rest.
 
+### Round 2 audit findings and fixes (v4)
+
+| # | Severity | Finding | Fix | Regression tests |
+|---|---|---|---|---|
+| 1 | Critical/High | Provenance accepted "repo owner == handle", so a third party's or upstream commit sitting in the developer's repo (or fork) passed | **Always** require `author.login == developer_handle` and `committer.login in [handle, "web-flow"]`; repository ownership is no longer consulted. Failures settle as `DISPUTED` with `ERR_UNAUTHORIZED_AUTHOR` | `test_foreign_author_in_developers_repo_rejected`, upstream-fork, third-party-committer, web-flow and case cases |
+| 2 | Medium | A required method was satisfied by any declaration keyword on the line, e.g. `var deposit, withdraw;` | **Structural** checks per language: Python `def name(`; Solidity/JS/TS `function name(`, `name = (...)` / `name = async (...)` / `name = function`, class-method shorthand; `modifier name`; plus Rust, Go, Ruby, shell forms. `var`/`let`/`const` bindings, typed variables, call sites and docs never count | `test_var_declaration_does_not_satisfy_required_methods`, 10 non-function mentions, 11 JS forms, 25-case matrix |
+| 3 | Medium | A commit could rewrite its own workflow to publish a green check; "anyone can evaluate" lets a funder time a developer out | A commit that touches `.github/workflows/` has its check-runs **ignored** (CI counts as none, ceiling 10, report shows `workflow_edited=1`). Evaluation stays permissionless; see *Trust model* below | `test_workflow_edit_makes_ci_untrusted`, path variants, `test_developer_evaluating_early_beats_the_funder_timeout` |
+| 4 | Medium | `curl ... \| bash` in a README zeroed the corridor and (via FRAUD) slashed the bond; the stripper also treated `//` in `https://` as a comment | Signatures, forbidden patterns and method checks run **only on code files** (`.py .sol .js .ts .sh .rs .go ...`), never on `.md .txt .rst .json .yml .yaml`. A `//` right after `:` is a URL scheme, not a comment. A signature hit still zeroes the ceiling, but **no longer forfeits the bond on its own**: slashing needs an empty commit or an independent model score under 40 | `test_curl_pipe_bash_in_docs_is_not_scanned` (6 file types), `test_signature_alone_never_slashes_the_bond`, URL-preservation cases |
+
+Interface changes in v4: the telemetry object (and `compute_bounds`) gains `workflow_tampered`; `ERR_PROVENANCE_MISMATCH` is now `ERR_UNAUTHORIZED_AUTHOR`.
+
+Documented limits: the workflow check looks at the commit's own diff, so a workflow edited in an *earlier* commit is not detected; a workflow that runs `echo ok` is still a green check-run. CI is evidence that a run happened, not that the tests are good.
+
+## Trust model & game theory
+
+- **Evaluation is permissionless.** Anyone can call `evaluate_milestone_consensus` on a `DELIVERED` grant, and it only ever resolves one way for a given commit. That also means a funder can trigger it. **Developers should trigger evaluation immediately after `submit_deliverable`** (it is a single transaction): the funder's exit is `cancel_stuck_delivery` after 7 days, which refunds escrow and bond, so a developer who submits and waits hands the funder a free option to cancel a delivery nobody has graded.
+- **Why the 7-day cancel is not a funder weapon.** It only works while the grant is still `DELIVERED`. Once anyone evaluates, the grant settles and the cancel reverts with `ERR_INVALID_STATE`. A funder who cancels a good, unevaluated delivery costs the developer nothing but time (bond refunded), and a developer who evaluates promptly removes the option entirely.
+- **Who can lose money.** A developer risks the 0.05 GEN bond only on an empty commit or a deliverable the model independently scores under 40, and the acceptance spec is public and immutable before they stake. Funders cannot slash through spec: forbidden patterns, impossible required methods and signature false-positives lower a score but never forfeit a bond.
+- **What the oracle trusts.** GitHub's API for commit metadata and Actions check-runs, and the validator committee for grading. It does not trust anything the developer commits as evidence (no report files, no edited workflows) or anything in documentation files.
+- **What it cannot prove.** That tests are meaningful, that the code is original, or that the GitHub identity is a human. Those are what the model's grade, the public spec and the funder's judgement of the result are for.
+
 ## Protocol theory
 
 ### 1. Evidence fixes a corridor; the model grades inside it
 
 LLMs are good at judging readability and architecture and bad at counting. So CodeProof splits the verdict:
 
-1. **Deterministic ingestion** (`_gather`): GitHub API commit metadata (SHA must match), **provenance** (developer's repo, or author+committer), **freshness** (after the grant), required files present, required methods *declared* in executable added code (comments, docstrings and strings stripped), forbidden patterns and malicious signatures, and test telemetry from authentic **GitHub Actions check-runs only**.
-2. **Corridor** (`_bounds`): three satisfaction ratios (files, methods, CI) in `[0, 1]`. The **weakest** governs: `hi = 100*min + 10`, `lo = 50*min`. Every forbidden-pattern hit costs 15 points of ceiling; an empty commit is capped at 20; a malicious payload caps it at 0. A deliverable that misses a hard requirement cannot be averaged into approval by excelling elsewhere.
+1. **Deterministic ingestion** (`_gather`): GitHub API commit metadata (SHA must match), **authorship** (author is the developer, committer is the developer or web-flow), **freshness** (after the grant), required files present, required methods *structurally declared* in executable added code (comments, docstrings and strings stripped; code files only), forbidden patterns and malicious signatures (code files only), and test telemetry from authentic **GitHub Actions check-runs only**, ignored if the commit edits a workflow.
+2. **Corridor** (`_bounds`): three satisfaction ratios (files, methods, CI) in `[0, 1]`. The **weakest** governs: `hi = 100*min + 10`, `lo = 50*min`. Every forbidden-pattern hit costs 15 points of ceiling; an empty commit is capped at 20; a malicious-payload signature caps it at 0. A deliverable that misses a hard requirement cannot be averaged into approval by excelling elsewhere.
 3. **LLM grade** inside the corridor: readability, architectural adherence, edge cases, CVE-free design. Commit text is wrapped as untrusted data; whatever it says, the score is clamped to `[lo, hi]`, so prompt injection cannot buy more than the measurements allow.
 
 ### 2. Equivalence Principle
@@ -94,7 +118,7 @@ Transient GitHub failures (429, 5xx, rate limit) raise `[TRANSIENT]` and the tra
 |---|---|---|
 | `score >= threshold` **APPROVED** | to developer | refunded |
 | below threshold **REJECTED** | back to funder | refunded |
-| below threshold **and** empty commit, malicious payload, or model score < 40 | back to funder | **forfeited**: 50% funder compensation, 50% protocol treasury |
+| below threshold **and** (empty commit, or model score < 40) | back to funder | **forfeited**: 50% funder compensation, 50% protocol treasury |
 | repo or commit 404 / blocked / historical / foreign **DISPUTED** | stays locked | refunded; developer may re-submit (max 3) or funder cancels |
 | `DELIVERED` for 7 days | `cancel_stuck_delivery` returns it to the funder | returned to the developer |
 
@@ -134,7 +158,7 @@ balance >= locked_escrow + locked_bonds + total_claimable + treasury
 
 ```
 contracts/code_proof.py      the intelligent contract
-tests/                       388 pytest cases (direct mode, no network)
+tests/                       482 pytest cases (direct mode, no network)
 scripts/deploy.py            key bootstrap, 10 GEN funding, deploy, record
 scripts/interact_live.py     `create` grants, then `deliver` + evaluate, record tx hashes
 scripts/seed_repo.py         author the fresh milestone commits (after the grants exist)
@@ -149,7 +173,7 @@ Python side (needs `genlayer-py`, `python-dotenv`, and for tests `genlayer-test`
 
 ```bash
 genvm-lint check contracts/code_proof.py          # lint + validate
-pytest                                            # 388 tests, about 8 minutes
+pytest                                            # 482 tests, about 9 minutes
 python scripts/deploy.py                          # keys in .env (git-ignored, mode 600)
 python scripts/interact_live.py create            # fund 3 grants bound to a GitHub handle
 python scripts/seed_repo.py                       # fresh commits in the developer's repo

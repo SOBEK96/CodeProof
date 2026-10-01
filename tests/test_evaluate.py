@@ -168,7 +168,8 @@ def test_no_test_telemetry_corridor_is_fraud_tier(env):
     c = env[0]
     tel = json.dumps(dict(files_total=1, additions=1, deletions=0, req_files_total=0,
                           req_files_found=0, methods_total=0, methods_found=0, forbidden_hits=0,
-                          tests_passed=0, tests_failed=0, malicious_hits=0))
+                          tests_passed=0, tests_failed=0, malicious_hits=0,
+                          workflow_tampered=0))
     assert c.compute_bounds(tel) == {"lo": 0, "hi": 10}
 
 

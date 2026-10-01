@@ -2,16 +2,16 @@
   "network": "studio-next",
   "chain_id": 61997,
   "rpc_url": "https://studio-next.genlayer.com/api",
-  "contract_address": "0x5CFb886928A2d74e37Da4C602f6083CF71B532a8",
-  "explorer_url": "https://explorer-studio-next.genlayer.com/address/0x5CFb886928A2d74e37Da4C602f6083CF71B532a8",
-  "deploy_tx": "0x9eb7572852950f4c61776dd6bb3c8cb7944318132920a06fd6e38d2d4bdd165e",
-  "deploy_tx_url": "https://explorer-studio-next.genlayer.com/tx/0x9eb7572852950f4c61776dd6bb3c8cb7944318132920a06fd6e38d2d4bdd165e",
+  "contract_address": "0x9902D0502512B3897Ee966F29a39e5334C585aFd",
+  "explorer_url": "https://explorer-studio-next.genlayer.com/address/0x9902D0502512B3897Ee966F29a39e5334C585aFd",
+  "deploy_tx": "0xe14b1037e89b6ed0faeb4f48cec71fd8dcad8d0bd2d169e46327a87bb65e4b03",
+  "deploy_tx_url": "https://explorer-studio-next.genlayer.com/tx/0xe14b1037e89b6ed0faeb4f48cec71fd8dcad8d0bd2d169e46327a87bb65e4b03",
   "source": "contracts/code_proof.py",
   "runner": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng",
-  "bytecode_sha256": "8da8b1158d255116d97acfff870843baeafb9bf3bec5d70afa9e01260a7f9094",
-  "source_sha256": "8da8b1158d255116d97acfff870843baeafb9bf3bec5d70afa9e01260a7f9094",
+  "bytecode_sha256": "d01982e9b45cd70d827949b1b06123f546c1c87f0926fce5308cb4d773749838",
+  "source_sha256": "d01982e9b45cd70d827949b1b06123f546c1c87f0926fce5308cb4d773749838",
   "deployer": "0x4AF8509D3036E3f05e75CD0E68aCd15B94697e1c",
-  "deployed_at": "2026-10-01T07:03:58+00:00",
+  "deployed_at": "2026-10-01T09:43:16+00:00",
   "superseded_deployments": [
     {
       "contract_address": "0xe1d5F76F02930B2adde5cd6d34C65EC2c7F7eBd6",
@@ -174,16 +174,111 @@
         "total_grants": 3,
         "treasury": "25000000000000000"
       }
+    },
+    {
+      "contract_address": "0x5CFb886928A2d74e37Da4C602f6083CF71B532a8",
+      "explorer_url": "https://explorer-studio-next.genlayer.com/address/0x5CFb886928A2d74e37Da4C602f6083CF71B532a8",
+      "deploy_tx": "0x9eb7572852950f4c61776dd6bb3c8cb7944318132920a06fd6e38d2d4bdd165e",
+      "deploy_tx_url": "https://explorer-studio-next.genlayer.com/tx/0x9eb7572852950f4c61776dd6bb3c8cb7944318132920a06fd6e38d2d4bdd165e",
+      "source_sha256": "8da8b1158d255116d97acfff870843baeafb9bf3bec5d70afa9e01260a7f9094",
+      "bytecode_sha256": "8da8b1158d255116d97acfff870843baeafb9bf3bec5d70afa9e01260a7f9094",
+      "deployed_at": "2026-10-01T07:03:58+00:00",
+      "grants": [
+        {
+          "title": "EVM Token Bridge Implementation",
+          "grant_id": 1,
+          "create_tx": "0x43097346715ae5e6e09717447e501e41fbd022bd5317edec49ff205ccd6a3822",
+          "developer_handle": "Handik4",
+          "created_at": 1790838253,
+          "seed_commit": "c6c70f6d265de05ff278f111eb515cc13bfaba93",
+          "repo_url": "https://github.com/Handik4/codeproof-milestones",
+          "ci": {
+            "slugs": [
+              "github-actions"
+            ],
+            "conclusions": [
+              "success"
+            ]
+          },
+          "submit_tx": "0x67c6af10f503da824a3df233fa01491f612b8d0cdf2a14b3367a27d1a97da69b",
+          "evaluate_tx": "0x41bbb1781718213398bfd7df8e9b2a4b0d2813de9728ed77162a830b9642f66c",
+          "final_status": "APPROVED",
+          "quality_score": 91,
+          "audit_report": "score=91/100 corridor=[50,100] tier=PASS files=2 +114/-0 req_files=2/2 methods=3/3 ci=1ok/0fail forbidden=0 malicious=0 | Both required files present, all 3 methods implemented. Lock-and-release pattern correct: state (redeemed+locked) updated before external on_release call. Reentrancy guard via _entered flag blocks recursive withdraw. Exactly-once enforced via redeemed set. Tests cover happy path, double-spend, reentrancy attack, unknown ticket, negative deposit. Minor gap: no test for concurrent multi-ticket parti",
+          "claim_tx": "0x18af87c7dfbb89a2101d348d1afb150159c00b40fe58bda9e83ef0817ddf73ac"
+        },
+        {
+          "title": "Flash Loan Vault",
+          "grant_id": 2,
+          "create_tx": "0xbc5cd23efdd06217cd54242608fdfaa401d335df43e1502a3a256eb40fa9cc81",
+          "developer_handle": "Handik4",
+          "created_at": 1790838271,
+          "seed_commit": "500da600653ec5597a91bad269f020694094b0a6",
+          "repo_url": "https://github.com/Handik4/codeproof-milestones",
+          "ci": {
+            "slugs": [
+              "github-actions"
+            ],
+            "conclusions": [
+              "success"
+            ]
+          },
+          "submit_tx": "0xa8f1ecbf2984af1bad8ec421a6e92101bacb36f1f7ea64bdc2defdc5c71a1aec",
+          "evaluate_tx": "0x0eb9f5844a16daaae453c2b2002793e20aaaadef25df992a920096384d127a57",
+          "final_status": "REJECTED",
+          "quality_score": 12,
+          "audit_report": "score=12/100 corridor=[12,35] tier=FRAUD files=1 +10/-0 req_files=1/2 methods=1/4 ci=1ok/0fail forbidden=0 malicious=0 | Only 1/2 required files present; 1/4 required methods implemented. No reentrancy guard, no fee accounting, no repayment check, loan is never verified to be repaid in the same call. Core security invariants completely absent. Non-functional as a flash loan vault. Score clamped to minimum corridor floor of 12."
+        },
+        {
+          "title": "Decentralized Identity Indexer",
+          "grant_id": 3,
+          "create_tx": "0x645102c3d90ad45f2013e371c88e435904074334eaa92f1afc4c6b0c90e3f7d2",
+          "developer_handle": "Handik4",
+          "created_at": 1790838288,
+          "seed_commit": "a6a3e4999744d249f281673fe0816ccabba132ad",
+          "repo_url": "https://github.com/Handik4/codeproof-milestones",
+          "ci": {
+            "slugs": [
+              "github-actions"
+            ],
+            "conclusions": [
+              "success"
+            ]
+          },
+          "submit_tx": "0xbe47e820bab8bd9c23fcc54529c5318774d17c4525e37195123ee166148e347f",
+          "final_status": "DELIVERED",
+          "quality_score": 0,
+          "audit_report": ""
+        }
+      ],
+      "metrics": {
+        "active_arbitrations": 1,
+        "approved": 1,
+        "balance": "3150000000000000000",
+        "disputed": 0,
+        "evaluated_count": 2,
+        "governor": "0x4AF8509D3036E3f05e75CD0E68aCd15B94697e1c",
+        "locked_bonds": "50000000000000000",
+        "locked_escrow": "1000000000000000000",
+        "mean_quality_score_x100": 5150,
+        "rejected": 1,
+        "solvent": true,
+        "total_claimable": "1025000000000000000",
+        "total_disbursed": "1000000000000000000",
+        "total_funded": "3000000000000000000",
+        "total_grants": 3,
+        "treasury": "25000000000000000"
+      }
     }
   ],
   "grants": [
     {
       "title": "EVM Token Bridge Implementation",
       "grant_id": 1,
-      "create_tx": "0x43097346715ae5e6e09717447e501e41fbd022bd5317edec49ff205ccd6a3822",
+      "create_tx": "0x21653991c21ca8ff67fbf5b778e0e3cf6ff64928bfaaee1907c0c2ab56dbb4e6",
       "developer_handle": "Handik4",
-      "created_at": 1790838253,
-      "seed_commit": "c6c70f6d265de05ff278f111eb515cc13bfaba93",
+      "created_at": 1790847812,
+      "seed_commit": "4d6f47259394b13d7fdfc4d1bcfeaee245cfc63b",
       "repo_url": "https://github.com/Handik4/codeproof-milestones",
       "ci": {
         "slugs": [
@@ -193,20 +288,20 @@
           "success"
         ]
       },
-      "submit_tx": "0x67c6af10f503da824a3df233fa01491f612b8d0cdf2a14b3367a27d1a97da69b",
-      "evaluate_tx": "0x41bbb1781718213398bfd7df8e9b2a4b0d2813de9728ed77162a830b9642f66c",
+      "submit_tx": "0x7a295bab4848f805ee6d9b7c0ed60a59e8a935ee28a3cf75201cb55bd74ec713",
+      "evaluate_tx": "0xd06ab520f4e9754910bc305974b412e9c80a48b7b0c57b075e82db2c1351860b",
       "final_status": "APPROVED",
-      "quality_score": 91,
-      "audit_report": "score=91/100 corridor=[50,100] tier=PASS files=2 +114/-0 req_files=2/2 methods=3/3 ci=1ok/0fail forbidden=0 malicious=0 | Both required files present, all 3 methods implemented. Lock-and-release pattern correct: state (redeemed+locked) updated before external on_release call. Reentrancy guard via _entered flag blocks recursive withdraw. Exactly-once enforced via redeemed set. Tests cover happy path, double-spend, reentrancy attack, unknown ticket, negative deposit. Minor gap: no test for concurrent multi-ticket parti",
-      "claim_tx": "0x18af87c7dfbb89a2101d348d1afb150159c00b40fe58bda9e83ef0817ddf73ac"
+      "quality_score": 88,
+      "audit_report": "score=88/100 corridor=[50,100] tier=PASS files=2 +114/-0 req_files=2/2 methods=3/3 ci=1ok/0fail forbidden=0 malicious=0 workflow_edited=0 | Both required files present, all 3 methods implemented. Lock-and-release order correct: redeemed set updated before external call preventing double-spend. Reentrancy guard tested with adversarial hook. Minor gaps: no test for multiple tickets per account, negative amount, or concurrent deposits. total_locked can go negative if locked underflows, but core security invariants are satisfied.",
+      "claim_tx": "0x5eeb8c87c69c907c645e16d4e7801cb78676d306b6332953e17de6f0c31b29aa"
     },
     {
       "title": "Flash Loan Vault",
       "grant_id": 2,
-      "create_tx": "0xbc5cd23efdd06217cd54242608fdfaa401d335df43e1502a3a256eb40fa9cc81",
+      "create_tx": "0xc7b61d5d56c6e1657b36ca29cfcbf3519b4f03f3de4f94cce75d6735708cd305",
       "developer_handle": "Handik4",
-      "created_at": 1790838271,
-      "seed_commit": "500da600653ec5597a91bad269f020694094b0a6",
+      "created_at": 1790847828,
+      "seed_commit": "5b2c5431a567a76573d31c175a0ea2461610f02a",
       "repo_url": "https://github.com/Handik4/codeproof-milestones",
       "ci": {
         "slugs": [
@@ -216,29 +311,30 @@
           "success"
         ]
       },
-      "submit_tx": "0xa8f1ecbf2984af1bad8ec421a6e92101bacb36f1f7ea64bdc2defdc5c71a1aec",
-      "evaluate_tx": "0x0eb9f5844a16daaae453c2b2002793e20aaaadef25df992a920096384d127a57",
+      "submit_tx": "0x9dff6f4beb5bc4355ae2935c3057baddeecbeff932a46761443a600cb671cb63",
+      "evaluate_tx": "0xe900a755f7670b23dc1095da1d3bcf7b589cbb1a65616ed8cb8afd5a956d7e23",
       "final_status": "REJECTED",
       "quality_score": 12,
-      "audit_report": "score=12/100 corridor=[12,35] tier=FRAUD files=1 +10/-0 req_files=1/2 methods=1/4 ci=1ok/0fail forbidden=0 malicious=0 | Only 1/2 required files present; 1/4 required methods implemented. No reentrancy guard, no fee accounting, no repayment check, loan is never verified to be repaid in the same call. Core security invariants completely absent. Non-functional as a flash loan vault. Score clamped to minimum corridor floor of 12."
+      "audit_report": "score=12/100 corridor=[12,35] tier=FRAUD files=1 +10/-0 req_files=1/2 methods=1/4 ci=1ok/0fail forbidden=0 malicious=0 workflow_edited=0 | Critical failure: Missing 3/4 required methods, missing test file, and lacks the ERC-3156 architecture. The implementation is highly insecure, missing the mandatory reentrancy guard and repayment verification logic. It allows total drainage of liquidity without repayment. Clamped to minimum score due to non-functional and insecure delivery."
     },
     {
       "title": "Decentralized Identity Indexer",
       "grant_id": 3,
-      "create_tx": "0x645102c3d90ad45f2013e371c88e435904074334eaa92f1afc4c6b0c90e3f7d2",
+      "create_tx": "0xc27e3baf6dc00a1afec68d395946b591efc209c5423ef65912f574e3f7a867d1",
       "developer_handle": "Handik4",
-      "created_at": 1790838288,
-      "seed_commit": "a6a3e4999744d249f281673fe0816ccabba132ad",
+      "created_at": 1790847843,
+      "seed_commit": "c2a819603f6bbaf56827ed7f41b8a4c5efa0a92e",
       "repo_url": "https://github.com/Handik4/codeproof-milestones",
       "ci": {
         "slugs": [
           "github-actions"
         ],
         "conclusions": [
+          "success",
           "success"
         ]
       },
-      "submit_tx": "0xbe47e820bab8bd9c23fcc54529c5318774d17c4525e37195123ee166148e347f",
+      "submit_tx": "0xa8324890b91d27264d9c5f098532d9b17ff450ab92f5e85bd3b1d3b649b21d28",
       "final_status": "DELIVERED",
       "quality_score": 0,
       "audit_report": ""
@@ -253,7 +349,7 @@
     "governor": "0x4AF8509D3036E3f05e75CD0E68aCd15B94697e1c",
     "locked_bonds": "50000000000000000",
     "locked_escrow": "1000000000000000000",
-    "mean_quality_score_x100": 5150,
+    "mean_quality_score_x100": 5000,
     "rejected": 1,
     "solvent": true,
     "total_claimable": "1025000000000000000",

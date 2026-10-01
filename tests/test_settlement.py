@@ -228,7 +228,7 @@ import json as _json
 
 TEL = dict(files_total=2, additions=40, deletions=0, req_files_total=2, req_files_found=2,
            methods_total=3, methods_found=3, forbidden_hits=0, malicious_hits=0,
-           tests_passed=42, tests_failed=0)
+           tests_passed=42, tests_failed=0, workflow_tampered=0)
 
 
 def bounds(c, **over):

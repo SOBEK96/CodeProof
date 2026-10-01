@@ -32,7 +32,8 @@ SPEC = {
 }
 
 GOOD_PATCH = (
-    "@@ -0,0 +1,40 @@\n+function deposit(uint256 a) external nonReentrant {}\n"
+    "@@ -0,0 +1,40 @@\n+modifier nonReentrant() { _; }\n"
+    "+function deposit(uint256 a) external nonReentrant {}\n"
     "+function withdraw(uint256 a) external nonReentrant {}\n+// tests\n"
 )
 
@@ -45,7 +46,7 @@ def spec_json(**over) -> str:
 
 def commit_body(sha=SHA, files=None, message="feat: bridge", patch=GOOD_PATCH,
                 author_login="acme", committer_login="acme", author_date=FUTURE,
-                committer_date=FUTURE):
+                committer_date=FUTURE, file_patches=None):
     if files is None:
         files = ["src/Bridge.sol", "test/Bridge.t.sol"]
     return json.dumps({
@@ -58,7 +59,8 @@ def commit_body(sha=SHA, files=None, message="feat: bridge", patch=GOOD_PATCH,
             "committer": {"date": committer_date},
         },
         "files": [
-            {"filename": f, "additions": 20, "deletions": 0, "patch": patch} for f in files
+            {"filename": f, "additions": 20, "deletions": 0,
+             "patch": (file_patches or {}).get(f, patch)} for f in files
         ],
     })
 

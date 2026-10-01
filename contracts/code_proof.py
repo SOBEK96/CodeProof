@@ -7,14 +7,16 @@
 # criteria and the GitHub handle of the developer. A developer stakes a small
 # anti-spam bond and submits a GitHub commit. Any steward may then trigger
 # evaluation: every validator
-#   1. ingests the commit from the GitHub API and PROVES PROVENANCE: the commit
-#      must live in the developer's own repository (or be authored AND committed
-#      by the developer's account) and must post-date the grant,
-#   2. reads test telemetry ONLY from authentic GitHub Actions check-runs (the
-#      repository's own `.codeproof/report.json` is never trusted),
-#   3. strips comments, docstrings and string literals before looking for
-#      required methods or forbidden patterns, so only executable declarations
-#      count,
+#   1. ingests the commit from the GitHub API and PROVES AUTHORSHIP: the commit's
+#      author must be the registered developer and its committer the developer or
+#      GitHub's web-flow, whatever repository it sits in, and it must post-date
+#      the grant,
+#   2. reads test telemetry ONLY from authentic GitHub Actions check-runs, and
+#      distrusts them when the commit itself edits `.github/workflows/`,
+#   3. strips comments, docstrings and string literals from CODE files (never
+#      docs) and accepts a required method only as a structural declaration
+#      (`def name(`, `function name(`, `name = (...)`), so only executable
+#      declarations count,
 #   4. derives a mathematical score corridor [lo, hi] from that evidence
 #      (`_bounds`) and lets an LLM grade quality inside it,
 # and the committee agrees under the Equivalence Principle through a custom
@@ -26,9 +28,11 @@
 #   score >= threshold            APPROVED  developer earns escrow + bond back
 #   score <  threshold            REJECTED  funder earns escrow back, bond refunded
 #   ... and the deliverable is    REJECTED  funder earns escrow back, bond forfeited
-#   empty, carries a known        (50% funder compensation / 50% treasury)
-#   malicious payload, or the
-#   model scores it < 40
+#   empty, or the model scores    (50% funder compensation / 50% treasury)
+#   it < 40 (a malicious-payload
+#   signature zeroes the score
+#   ceiling but never slashes
+#   on its own)
 #   repo / commit unreachable,    DISPUTED  fail-closed: bond refunded, escrow stays
 #   blocked, historical or                  locked for a re-submission / cancellation
 #   foreign
@@ -83,7 +87,7 @@ ERR_TRANSFER = "ERR_TRANSFER_FAILED_RESTORED"
 ERR_TOO_EARLY = "ERR_TOO_EARLY"
 ERR_ATTEMPTS = "ERR_MAX_ATTEMPTS"
 ERR_HISTORICAL = "ERR_HISTORICAL_COMMIT"
-ERR_PROVENANCE = "ERR_PROVENANCE_MISMATCH"
+ERR_AUTHOR = "ERR_UNAUTHORIZED_AUTHOR"
 ERR_TRANSIENT = "[TRANSIENT]"
 ERR_LLM = "[LLM_ERROR]"
 
@@ -91,13 +95,20 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/?$")
 HANDLE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_./\-]{1,120}$")
-DECL_RE = re.compile(
-    r"\b(function|def|fn|func|fun|modifier|class|contract|interface|struct|library|event|error|"
-    r"public|private|protected|external|internal|static|async|override|virtual|const|let|var)\b"
-)
 
-# Fixed list of confirmed-malicious payload signatures. Only these (or an empty
-# commit, or a model score under 40) can forfeit a developer's bond; a funder-
+# Only these files are scanned as code. Documentation and data (.md .txt .rst .json
+# .yml ...) are never searched for methods, forbidden patterns or malicious payloads.
+CODE_EXTS = (
+    ".py", ".sol", ".vy", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".rs",
+    ".go", ".rb", ".java", ".kt", ".scala", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".php",
+    ".pl", ".swift", ".lua", ".move",
+)
+JS_EXTS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+WORKFLOW_DIR = ".github/workflows/"
+
+# Fixed list of malicious payload signatures, scanned in CODE files only. A hit
+# drops the score ceiling to 0 but does not by itself forfeit the bond: slashing
+# also needs the model to independently score the deliverable under 40. A funder-
 # chosen forbidden pattern can only lower the score.
 MALICIOUS_SIGNATURES = (
     "/dev/tcp/", "bash -i >&", "nc -e /bin", "rm -rf /*", "rm -rf / ", "eval(base64",
@@ -120,7 +131,7 @@ COMMON_TOKENS = frozenset((
 TEL_KEYS = (
     "files_total", "additions", "deletions", "req_files_total", "req_files_found",
     "methods_total", "methods_found", "forbidden_hits", "malicious_hits", "tests_passed",
-    "tests_failed",
+    "tests_failed", "workflow_tampered",
 )
 
 
@@ -284,6 +295,13 @@ def _strip_lines(lines: list, hash_style: bool, resets: list):
                     i += 3
                     continue
             else:
+                if two == "//" and i > 0 and line[i - 1] == ":":
+                    # URL scheme separator (`https://`, `file:///`): keep the whole slash run
+                    while i < n and line[i] == "/":
+                        keep.append("/")
+                        blank.append("/")
+                        i += 1
+                    continue
                 if two == "//":
                     break
                 if two == "/*":
@@ -308,9 +326,13 @@ def _strip_lines(lines: list, hash_style: bool, resets: list):
     return keep_lines, blank_lines
 
 
+def _is_code_file(filename: str) -> bool:
+    return filename.lower().endswith(CODE_EXTS)
+
+
 def _is_hash_style(filename: str) -> bool:
     low = filename.lower()
-    for ext in (".py", ".sh", ".rb", ".yml", ".yaml", ".toml", ".pl", ".r"):
+    for ext in (".py", ".sh", ".bash", ".rb", ".pl"):
         if low.endswith(ext):
             return True
     return False
@@ -320,8 +342,11 @@ def _code_of_patch(filename: str, patch: str):
     """(keep_text, blank_lines) of the ADDED executable code in one file's patch.
 
     Context lines are run through the stripper too, so a block comment opened on an
-    unchanged line still swallows the added lines inside it.
+    unchanged line still swallows the added lines inside it. Documentation and data
+    files yield nothing: they are not code and are never scanned.
     """
+    if not _is_code_file(filename):
+        return "", []
     body = []
     flags = []
     resets = []
@@ -350,11 +375,39 @@ def _code_of_patch(filename: str, patch: str):
     return "\n".join(added_keep), added_blank
 
 
-def _declares(blank_lines: list, name: str) -> bool:
-    word = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+def _declares(blank_lines: list, name: str, filename: str) -> bool:
+    """True if `name` is STRUCTURALLY declared as a function in these (comment- and
+    string-stripped) added lines. Variables (`var`/`let`/`const x;`), call sites and
+    mentions never count; documentation files never count."""
+    low = filename.lower()
+    if not _is_code_file(low):
+        return False
+    n = re.escape(name)
+    if low.endswith(".py"):
+        pats = [r"\bdef\s+" + n + r"\s*\("]
+    elif low.endswith(".sol") or low.endswith(".vy"):
+        pats = [r"\bfunction\s+" + n + r"\s*\(", r"\bmodifier\s+" + n + r"\b",
+                r"\bdef\s+" + n + r"\s*\("]
+    elif low.endswith(JS_EXTS):
+        mods = r"(?:(?:public|private|protected|static|async|override|readonly)\s+)*"
+        pats = [r"\bfunction\s*\*?\s+" + n + r"\s*\(",
+                r"(?<![A-Za-z0-9_$])" + n + r"\s*[:=]\s*(?:async\s*)?(?:function\b|\()",
+                r"^\s*" + mods + n + r"\s*\([^)]*\)\s*(?::[^{]+)?\{"]
+    elif low.endswith(".rs"):
+        pats = [r"\bfn\s+" + n + r"\s*[<(]"]
+    elif low.endswith(".go"):
+        pats = [r"\bfunc\s+(?:\([^)]*\)\s*)?" + n + r"\s*[<(]"]
+    elif low.endswith(".rb"):
+        pats = [r"\bdef\s+(?:self\.)?" + n + r"\b"]
+    elif low.endswith(".sh") or low.endswith(".bash"):
+        pats = [r"\bfunction\s+" + n + r"\b", r"^\s*" + n + r"\s*\(\)"]
+    else:
+        pats = [r"\b(?:function|def|fn|func|fun)\s+" + n + r"\s*[<(]"]
+    compiled = [re.compile(p) for p in pats]
     for ln in blank_lines:
-        if DECL_RE.search(ln) is not None and word.search(ln) is not None:
-            return True
+        for rx in compiled:
+            if rx.search(ln) is not None:
+                return True
     return False
 
 
@@ -366,8 +419,9 @@ def _bounds(tel: dict):
     it; no verified run at all is 0, which fails closed). The WEAKEST governs:
     hi = 100*min + 10 and lo = 50*min. The floor stays below MIN_THRESHOLD, so the
     model can always pull a deliverable under the bar. Each forbidden-pattern hit
-    costs 15 points of ceiling, an empty commit is capped at 20, and a known
-    malicious payload caps the ceiling at 0.
+    costs 15 points of ceiling, an empty commit is capped at 20, and a malicious-
+    payload signature caps the ceiling at 0. CI that cannot be trusted (the commit
+    edits a workflow) counts as no CI.
     """
     files_ratio = 1.0
     if tel["req_files_total"] > 0:
@@ -397,10 +451,12 @@ def _bounds(tel: dict):
 
 
 def _is_fraud(tel: dict, llm_score: int) -> bool:
-    """Bond-forfeiting conditions. Spec-controlled signals (forbidden patterns,
-    missing methods) can lower a score but can never slash a developer."""
+    """Bond-forfeiting conditions. Spec-controlled signals (forbidden patterns, missing
+    methods) and signature scans (which can false-positive) lower a score but never slash
+    a developer alone: slashing needs an empty commit, or the model independently
+    scoring the deliverable under 40."""
     empty = tel["files_total"] == 0 or tel["additions"] == 0
-    return empty or tel["malicious_hits"] > 0 or llm_score < FRAUD_SCORE
+    return empty or llm_score < FRAUD_SCORE
 
 
 def _tier(score: int, threshold: int, fraud: bool) -> str:
@@ -514,16 +570,16 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
     if not isinstance(data, dict) or str(data.get("sha", "")).lower() != sha:
         return {"ok": False, "reason": "COMMIT_SHA_MISMATCH"}
 
-    # --- provenance: the commit must belong to the registered developer --------
+    # --- authorship: ALWAYS the registered developer, whatever repo this is ------
+    # Repository ownership proves nothing about who wrote a commit (forks, upstream
+    # history, third-party contributions), so it is not consulted.
     want = handle.lower()
     author = data.get("author") if isinstance(data.get("author"), dict) else {}
     committer = data.get("committer") if isinstance(data.get("committer"), dict) else {}
     author_login = str(author.get("login", "")).lower()
     committer_login = str(committer.get("login", "")).lower()
-    owns_repo = owner.lower() == want
-    wrote_it = author_login == want and committer_login == want
-    if not (owns_repo or wrote_it):
-        return {"ok": False, "reason": ERR_PROVENANCE}
+    if author_login != want or committer_login not in (want, "web-flow"):
+        return {"ok": False, "reason": ERR_AUTHOR}
 
     # --- freshness: authored and committed after the grant existed -------------
     cmeta = data.get("commit") if isinstance(data.get("commit"), dict) else {}
@@ -539,7 +595,7 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
     additions = 0
     deletions = 0
     keep_texts = []
-    blank_by_file = []
+    blank_by_file = []  # (filename, stripped added lines)
     for f in files:
         if not isinstance(f, dict):
             continue
@@ -551,7 +607,7 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
         if isinstance(patch, str):
             keep_text, blank_lines = _code_of_patch(fname, patch)
             keep_texts.append(keep_text)
-            blank_by_file.append(blank_lines)
+            blank_by_file.append((fname, blank_lines))
     code_keep = "\n".join(keep_texts)
 
     req_found = 0
@@ -560,7 +616,7 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
             req_found += 1
     methods_found = 0
     for m in spec["required_methods"]:
-        if any(_declares(lines, m) for lines in blank_by_file):
+        if any(_declares(lines, m, fname) for fname, lines in blank_by_file):
             methods_found += 1
     forbidden = 0
     for pat in spec["forbidden_patterns"]:
@@ -573,13 +629,19 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
 
     # --- tests: ONLY authentic GitHub Actions check-runs -----------------------
     # A committed report file is developer-controlled and is never read.
+    # A commit that edits `.github/workflows/` can write its own green check, so its
+    # CI is untrusted and counts as none.
+    tampered = any(n.startswith(WORKFLOW_DIR) for n in names)
     passed = 0
     failed = 0
-    cr = _http_get(f"{base}/commits/{sha}/check-runs?per_page=100")
-    cs = _status_of(cr)
-    if cs == 429 or cs >= 500 or cs == 0 or (cs == 403 and _rate_limited(cr)):
-        raise gl.vm.UserError(f"{ERR_TRANSIENT} check-runs returned {cs}")
-    if 200 <= cs < 300:
+    cs = 0
+    cr = None
+    if not tampered:
+        cr = _http_get(f"{base}/commits/{sha}/check-runs?per_page=100")
+        cs = _status_of(cr)
+        if cs == 429 or cs >= 500 or cs == 0 or (cs == 403 and _rate_limited(cr)):
+            raise gl.vm.UserError(f"{ERR_TRANSIENT} check-runs returned {cs}")
+    if not tampered and 200 <= cs < 300:
         try:
             for run in json.loads(_text_of(cr)).get("check_runs", []):
                 app = run.get("app") if isinstance(run.get("app"), dict) else {}
@@ -609,6 +671,7 @@ def _gather(owner: str, repo: str, sha: str, spec: dict, handle: str, created_at
             "malicious_hits": malicious,
             "tests_passed": passed,
             "tests_failed": failed,
+            "workflow_tampered": 1 if tampered else 0,
         },
         "message": _sanitize(message, 200),
         "files": sorted(_sanitize(n, 120) for n in names)[:30],
@@ -635,7 +698,9 @@ def _build_prompt(title: str, spec: dict, threshold: int, ev: dict, lo: int, hi:
         f"required files present: {t['req_files_found']}/{t['req_files_total']}\n"
         f"required methods declared in executable code: {t['methods_found']}/{t['methods_total']}\n"
         f"forbidden patterns found: {t['forbidden_hits']}\n"
-        f"authentic CI check-runs passed: {t['tests_passed']}, failed: {t['tests_failed']}\n"
+        f"authentic CI check-runs passed: {t['tests_passed']}, failed: {t['tests_failed']}"
+        f"{' (UNTRUSTED: this commit edits a CI workflow)' if t['workflow_tampered'] else ''}\n"
+        f"malicious-payload signatures found in code: {t['malicious_hits']}\n"
         f"Your score will be clamped into the corridor [{lo}, {hi}].\n"
         "If the code is non-functional, insecure or does not do what the milestone asks, "
         "score it below the threshold even when the measurements are clean.\n\n"
@@ -863,9 +928,9 @@ class CodeProof(gl.contract.Contract):
     @gl.public.view
     def preview_code(self, filename: str, patch: str, method: str) -> dict:
         """What the oracle sees in a patch once comments, docstrings and strings are
-        stripped: whether `method` is declared in executable code (transparency)."""
+        stripped: whether `method` is structurally declared in executable code (transparency)."""
         keep, blank = _code_of_patch(filename, patch)
-        return {"declared": _declares(blank, method), "code": keep[:2000]}
+        return {"declared": _declares(blank, method, filename), "code": keep[:2000]}
 
     @gl.public.view
     def is_valid_forbidden_pattern(self, pattern: str) -> bool:
@@ -1036,7 +1101,8 @@ class CodeProof(gl.contract.Contract):
             f"req_files={int(tel['req_files_found'])}/{int(tel['req_files_total'])} "
             f"methods={int(tel['methods_found'])}/{int(tel['methods_total'])} "
             f"ci={int(tel['tests_passed'])}ok/{int(tel['tests_failed'])}fail "
-            f"forbidden={int(tel['forbidden_hits'])} malicious={int(tel['malicious_hits'])} | "
+            f"forbidden={int(tel['forbidden_hits'])} malicious={int(tel['malicious_hits'])} "
+            f"workflow_edited={int(tel['workflow_tampered'])} | "
             f"{_sanitize(str(result.get('rationale', '')), 400)}",
             MAX_REPORT_CHARS)
 
